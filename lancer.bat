@@ -29,27 +29,29 @@ if not exist data\.installe (
 :menu
 echo.
 echo ================= IMMO-SCANNER =================
-echo  1. Demo (donnees fictives) et ouvrir le rapport
-echo  2. Telecharger les ventes reelles d'un departement (DVF)
-echo  3. Classement des communes d'un departement
-echo  4. Analyser un bien precis
-echo  5. Importer un fichier d'annonces (CSV/JSON) et ouvrir le rapport
-echo  6. Ouvrir le rapport des annonces deja importees
-echo  7. Importer un fichier de loyers (Carte des loyers)
-echo  8. Etat de la base
+echo  --- DONNEES REELLES ---
+echo  1. Telecharger les donnees reelles d'un departement (ventes + loyers)
+echo  2. Classement des communes d'un departement
+echo  3. Analyser un bien precis (ex: une annonce vue sur Leboncoin)
+echo  4. Importer un fichier d'annonces (CSV/JSON) et ouvrir le rapport
+echo  5. Ouvrir le rapport des annonces deja importees
+echo  6. Importer un fichier de loyers manuellement
+echo  7. Etat de la base
+echo  --- TEST ---
+echo  9. Demo (donnees FICTIVES, base separee)
 echo  Q. Quitter
 echo ================================================
 set CHOIX=
 set /p CHOIX=Votre choix : 
 
-if "%CHOIX%"=="1" goto demo
-if "%CHOIX%"=="2" goto dvf
-if "%CHOIX%"=="3" goto marches
-if "%CHOIX%"=="4" goto estimer
-if "%CHOIX%"=="5" goto import
-if "%CHOIX%"=="6" goto rapport
-if "%CHOIX%"=="7" goto loyers
-if "%CHOIX%"=="8" goto stats
+if "%CHOIX%"=="1" goto dvf
+if "%CHOIX%"=="2" goto marches
+if "%CHOIX%"=="3" goto estimer
+if "%CHOIX%"=="4" goto import
+if "%CHOIX%"=="5" goto rapport
+if "%CHOIX%"=="6" goto loyers
+if "%CHOIX%"=="7" goto stats
+if "%CHOIX%"=="9" goto demo
 if /i "%CHOIX%"=="Q" exit /b 0
 goto menu
 
@@ -61,7 +63,8 @@ goto menu
 :dvf
 set DEP=
 set /p DEP=Numero(s) de departement separes par un espace (ex: 33 ou 33 40 64, "all" = toute la France) : 
-%PY% -m immo_scanner.cli dvf --departements %DEP%
+echo Telechargement en cours (quelques minutes par departement)...
+%PY% -m immo_scanner.cli preparer %DEP%
 goto menu
 
 :marches

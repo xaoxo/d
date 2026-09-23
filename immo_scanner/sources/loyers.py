@@ -76,3 +76,46 @@ def load(conn, source: str, type_local: str | None, cache_dir: Path) -> int:
     conn.executemany("INSERT OR REPLACE INTO loyers VALUES (?,?,?,?,?,?)", rows)
     conn.commit()
     return len(rows)
+
+
+# --------------------------------------------------------------------------
+# Téléchargement automatique depuis data.gouv.fr (jeu « Carte des loyers »)
+# --------------------------------------------------------------------------
+API_RECHERCHE = ("https://www.data.gouv.fr/api/1/datasets/"
+                 "?q=carte+des+loyers+indicateurs+loyers+annonce+commune&page_size=20")
+
+
+def choisir_ressources(datasets: list[dict]) -> dict[str, str]:
+    """Parmi les résultats de l'API data.gouv.fr, retient le jeu « Carte des loyers »
+    le plus récent et renvoie {type_local: url_csv} (fichiers pred-app / pred-mai)."""
+    candidats = [d for d in datasets
+                 if "loyer" in (d.get("title") or "").lower() and "commune" in (d.get("title") or "").lower()]
+    candidats.sort(key=lambda d: d.get("title") or "", reverse=True)   # « … en 2025 » avant « … en 2024 »
+    for d in candidats:
+        urls = {}
+        for r in d.get("resources", []):
+            nom = ((r.get("title") or "") + " " + (r.get("url") or "")).lower()
+            if (r.get("format") or "").lower() != "csv" and ".csv" not in nom:
+                continue
+            # pred-app-… = tous appartements ; pred-app12 / pred-app3 = sous-segments, ignorés
+            if "pred-app-" in nom or "pred-app_" in nom:
+                urls.setdefault("appartement", r["url"])
+            elif "pred-mai" in nom:
+                urls.setdefault("maison", r["url"])
+        if urls:
+            return urls
+    return {}
+
+
+def charger_auto(conn, cache_dir: Path) -> dict[str, int]:
+    import json
+    import urllib.request
+
+    from ..util import USER_AGENT
+    req = urllib.request.Request(API_RECHERCHE, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        datasets = json.load(resp).get("data", [])
+    urls = choisir_ressources(datasets)
+    if not urls:
+        raise RuntimeError("jeu de données « Carte des loyers » introuvable sur data.gouv.fr")
+    return {t: load(conn, url, t, cache_dir) for t, url in urls.items()}

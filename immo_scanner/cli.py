@@ -45,6 +45,30 @@ def cmd_dvf(args, conn, cfg):
     print(f"Base DVF : {total} ventes exploitables")
 
 
+def _preparer_loyers(conn, cache):
+    if conn.execute("SELECT COUNT(*) FROM loyers").fetchone()[0]:
+        return
+    print("Téléchargement des loyers de marché (Carte des loyers, data.gouv.fr)…")
+    try:
+        for t, n in loyers.charger_auto(conn, Path(cache)).items():
+            print(f"  loyers {t}s : {n} communes")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  Échec du téléchargement automatique des loyers ({exc}).\n"
+              "  Téléchargez le fichier « Carte des loyers » sur data.gouv.fr puis : immo loyers FICHIER --type appartement")
+
+
+def cmd_preparer(args, conn, cfg):
+    deps = dvf.DEPARTEMENTS if args.departements == ["all"] else args.departements
+    for dep in deps:
+        print(f"Département {dep} : téléchargement des ventes réelles (DVF)…")
+        dvf.assurer_departement(conn, dep.upper(), Path(args.cache), cfg.marche)
+    _preparer_loyers(conn, args.cache)
+    print()
+    cmd_stats(args, conn, cfg)
+    if conn.execute("SELECT COUNT(*) FROM annonces").fetchone()[0]:
+        print(f"{analyser_tout(conn, cfg)} annonce(s) ré-analysée(s)")
+
+
 def cmd_loyers(args, conn, cfg):
     for src in args.source:
         n = loyers.load(conn, src, args.type, Path(args.cache))
@@ -65,6 +89,11 @@ def cmd_import(args, conn, cfg):
         lot = fichier.read(f, args.source)
         print(f"{f} : {len(lot)} ligne(s) lue(s)")
         annonces += lot
+    deps = {dvf.departement_depuis_cp(a.normalized().code_postal) for a in annonces} - {None}
+    for dep in sorted(deps):
+        dvf.assurer_departement(conn, dep, Path(args.cache), cfg.marche)
+    if deps:
+        _preparer_loyers(conn, args.cache)
     if args.remplacer:
         sources = {a.source for a in annonces}
         conn.executemany("UPDATE annonces SET active=0 WHERE source=?", [(s,) for s in sources])
@@ -129,6 +158,11 @@ def cmd_estimer(args, conn, cfg):
                      lat=args.lat, lon=args.lon, dpe=args.dpe, description=args.description,
                      loyer_actuel=args.loyer, charges_annuelles=args.charges, taxe_fonciere=args.taxe_fonciere,
                      neuf=args.neuf).normalized()
+    dep = dvf.departement_depuis_cp(a.code_postal) or (a.code_commune[:2] if a.code_commune else None)
+    if dep:
+        if dvf.assurer_departement(conn, dep, Path(args.cache), cfg.marche):
+            print()
+        _preparer_loyers(conn, args.cache)
     base.resolve_commune(conn, a)
     row = {**a.__dict__, "id": a.id, "prix_initial": a.prix}
     res = analyser(conn, cfg, MarketModel(conn, cfg.marche), row)
@@ -203,6 +237,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ex : 2021-2025 ou 2023,2024")
     s.add_argument("--fichier", nargs="+", help="fichier(s) DVF géolocalisés locaux (.csv / .csv.gz)")
     s.set_defaults(func=cmd_dvf)
+
+    s = sub.add_parser("preparer", help="télécharger automatiquement ventes réelles + loyers d'un ou plusieurs départements")
+    s.add_argument("departements", nargs="+", help="ex : 33 40, ou all")
+    s.set_defaults(func=cmd_preparer)
 
     s = sub.add_parser("loyers", help="importer des indicateurs de loyers (fichier ou URL)")
     s.add_argument("source", nargs="+")

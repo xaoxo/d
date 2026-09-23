@@ -35,6 +35,42 @@ TYPES = {"Appartement": "appartement", "Maison": "maison"}
 NATURES = {"Vente": False, "Vente en l'état futur d'achèvement": True}
 
 
+def departement_depuis_cp(cp: str | None) -> str | None:
+    """Département à partir du code postal (Corse : 200xx-201xx = 2A, sinon 2B)."""
+    if not cp or len(cp) < 2:
+        return None
+    if cp.startswith("97"):
+        return cp[:3]
+    if cp.startswith("20"):
+        return "2A" if cp[:3] in ("200", "201") else "2B"
+    return cp[:2]
+
+
+def annees_par_defaut() -> list[int]:
+    from datetime import date
+    return list(range(date.today().year - 5, date.today().year))
+
+
+def assurer_departement(conn, dep: str, cache_dir: Path, cfg: Marche, log=print) -> int:
+    """Télécharge les ventes DVF d'un département si elles ne sont pas déjà en base."""
+    deja = conn.execute("SELECT COUNT(*) FROM dvf_ventes WHERE code_departement=?", (dep,)).fetchone()[0]
+    if deja:
+        return 0
+    if dep not in DEPARTEMENTS:
+        log(f"Département {dep} non couvert par DVF (Alsace-Moselle / Mayotte).")
+        return 0
+    total = 0
+    for annee in annees_par_defaut():
+        try:
+            n = load_file(conn, fetch(annee, dep, cache_dir), cfg)
+            log(f"  ventes réelles {annee}, dép. {dep} : {n}")
+            total += n
+        except Exception as exc:  # noqa: BLE001 - une année manquante n'est pas bloquante
+            log(f"  ventes {annee}, dép. {dep} : indisponible ({exc})")
+    rebuild_communes(conn)
+    return total
+
+
 def dvf_url(annee: int, dep: str) -> str:
     return BASE_URL.format(annee=annee, dep=dep)
 

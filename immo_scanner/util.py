@@ -83,9 +83,11 @@ def quantile(values, q):
 def download(url: str, dest: Path, timeout: int = 120) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest, "wb") as out:
+    tmp = dest.with_name(dest.name + ".part")   # pas de fichier corrompu en cache si coupure
+    with urllib.request.urlopen(req, timeout=timeout) as resp, open(tmp, "wb") as out:
         while chunk := resp.read(1 << 16):
             out.write(chunk)
+    tmp.replace(dest)
     return dest
 
 
