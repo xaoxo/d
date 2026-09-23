@@ -139,3 +139,26 @@ def test_charger_sites_toml(tmp_path):
                  'liens_annonce = "/bien/\\\\d+"\n')
     s = sites.charger_sites(p)
     assert s["licitor"].actif is False and s["mon-agence"].liens_annonce == r"/bien/\d+"
+
+
+def test_robots_lu_avec_notre_identite_et_explique(serveur):
+    from immo_scanner.sources.web import Crawler
+    c = Crawler(delay=0)
+    assert c.allowed(serveur + "/index.html")
+    assert not c.allowed(serveur + "/prive/x.html")
+    exp = c.explication_robots(serveur + "/prive/x.html")
+    assert "statut 200" in exp and "Disallow: /prive/" in exp
+
+
+def test_robots_absent_tout_permis(tmp_path, monkeypatch):
+    import functools, http.server, threading
+    from immo_scanner.sources.web import Crawler
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path))
+    handler.log_message = lambda *a, **k: None
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        assert Crawler(delay=0).allowed(f"http://127.0.0.1:{srv.server_address[1]}/page.html")
+    finally:
+        srv.shutdown()

@@ -215,7 +215,8 @@ def cmd_sites_tester(args, conn, cfg):
     for site in _choisir_sites(args):
         print(f"\n=== {site.libelle} ===")
         s = sites_mod.Site(**{**site.__dict__, "max_pages": args.max_pages})
-        rep = sites_mod.collecter(s, Crawler(delay=args.delai), args.departements, log=lambda *_: None)
+        crawler = Crawler(delay=args.delai)
+        rep = sites_mod.collecter(s, crawler, args.departements, log=lambda *_: None)
         print(f"Pages de liste lues     : {rep.pages_liste}")
         print(f"Liens d'annonce trouvés : {rep.liens_annonce_trouves}")
         print(f"Fiches lues             : {rep.pages_annonce}")
@@ -228,9 +229,13 @@ def cmd_sites_tester(args, conn, cfg):
             print(f"   ? fiche non comprise : {u}")
         for u in rep.bloques_robots[:3]:
             print(f"   ! interdit par robots.txt : {u}")
+        if rep.bloques_robots:
+            print("     " + crawler.explication_robots(rep.bloques_robots[0]))
         for e in rep.erreurs[:3]:
             print(f"   ! erreur : {e}")
-        if not rep.pages_liste:
+        if rep.bloques_robots and not rep.pages_liste:
+            print("=> Le site interdit l'accès aux robots : il est ignoré. Copiez ce diagnostic à l'assistant.")
+        elif not rep.pages_liste:
             print("=> Site injoignable. Copiez ce diagnostic à l'assistant pour corriger le profil.")
         elif not rep.liens_annonce_trouves:
             print("=> Aucun lien d'annonce reconnu : le motif « liens_annonce » est à ajuster "

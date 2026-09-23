@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import urllib.robotparser
@@ -134,20 +135,54 @@ class Crawler:
     def __init__(self, delay: float = 2.0, max_pages: int = 200, timeout: int = 30):
         self.delay, self.max_pages, self.timeout = delay, max_pages, timeout
         self._robots: dict[str, urllib.robotparser.RobotFileParser] = {}
+        self.robots_info: dict[str, tuple[str, str]] = {}
         self._last = 0.0
+
+    def _lire_robots(self, base: str):
+        """Lit robots.txt avec NOTRE identité (celle de Python est souvent refusée d'office).
+
+        Renvoie (parser ou None, statut lisible). Conformément à la RFC 9309 : fichier absent
+        (404…) = tout est permis ; accès refusé (401/403) = on s'abstient par prudence."""
+        req = urllib.request.Request(base + "/robots.txt", headers={"User-Agent": USER_AGENT})
+        rp = urllib.robotparser.RobotFileParser(base + "/robots.txt")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                texte = resp.read().decode("utf-8", errors="replace")
+            rp.parse(texte.splitlines())
+            return rp, "200", texte
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                rp.disallow_all = True
+                return rp, f"{exc.code} (le site refuse de montrer son robots.txt aux robots)", ""
+            return None, f"{exc.code} (pas de robots.txt : tout est permis)", ""
+        except Exception as exc:  # noqa: BLE001 - site injoignable : l'erreur remontera au get()
+            return None, f"injoignable ({exc})", ""
 
     def allowed(self, url: str) -> bool:
         parts = urllib.parse.urlsplit(url)
         base = f"{parts.scheme}://{parts.netloc}"
         if base not in self._robots:
-            rp = urllib.robotparser.RobotFileParser(base + "/robots.txt")
-            try:
-                rp.read()
-            except Exception:
-                rp = None
+            rp, statut, texte = self._lire_robots(base)
             self._robots[base] = rp
+            self.robots_info[base] = (statut, texte)
         rp = self._robots[base]
         return rp is None or rp.can_fetch(USER_AGENT, url)
+
+    def explication_robots(self, url: str) -> str:
+        """Pourquoi robots.txt bloque cette URL (statut + règles qui nous concernent)."""
+        parts = urllib.parse.urlsplit(url)
+        statut, texte = self.robots_info.get(f"{parts.scheme}://{parts.netloc}", ("?", ""))
+        regles, groupe = [], False
+        for ligne in texte.splitlines():
+            l = ligne.split("#")[0].strip()
+            if l.lower().startswith("user-agent:"):
+                agent = l.split(":", 1)[1].strip()
+                groupe = agent == "*" or agent.lower() in USER_AGENT.lower()
+                if groupe:
+                    regles.append(l)
+            elif groupe and l.lower().startswith(("disallow:", "allow:")):
+                regles.append(l)
+        return f"robots.txt : statut {statut}" + ("\n       " + "\n       ".join(regles[:12]) if regles else "")
 
     def get(self, url: str) -> str:
         wait = self.delay - (time.monotonic() - self._last)
