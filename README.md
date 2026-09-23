@@ -21,6 +21,12 @@ pour faire ressortir, pour chaque bien :
 Un classement des **communes** (prix, tendance, volume, rendement théorique) permet aussi de
 repérer les marchés porteurs sur toute la France, sans aucune annonce.
 
+## Windows : le plus simple
+
+1. Installez Python 3.11+ depuis https://www.python.org/downloads/ en cochant **« Add Python to PATH »**.
+2. Téléchargez ce projet (bouton **Code → Download ZIP** sur GitHub) et dézippez-le.
+3. Double-cliquez sur **`lancer.bat`** : l'installation se fait toute seule, puis un menu s'affiche.
+
 ## Installation
 
 ```bash
