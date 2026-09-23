@@ -53,3 +53,22 @@ tri = 0.15
 tendance = 0.15
 cashflow = 0.05
 liquidite = 0.10
+
+[encheres]
+frais_pct = 0.12          # frais d'adjudication (droits, émoluments, avocat)
+marge_cible = 0.20        # marge de sécurité visée : sert à calculer l'offre max conseillée
+
+[alertes]
+score_min = 60            # alerte si nouvelle annonce avec un score >= 60…
+decote_min = 0.15         # …ou une décote >= 15 %, ou une mise à prix sous l'offre max
+baisse_min = 0.03         # alerte si le prix baisse d'au moins 3 %
+windows = true            # notification Windows
+# Telegram (alertes sur le téléphone) : voir README
+telegram_token = ""
+telegram_chat_id = ""
+# E-mail (Gmail : créer un « mot de passe d'application »)
+email_smtp = ""           # ex : "smtp.gmail.com"
+email_port = 465
+email_utilisateur = ""
+email_mot_de_passe = ""
+email_destinataire = ""

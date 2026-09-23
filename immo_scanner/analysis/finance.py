@@ -99,9 +99,12 @@ class Bilan:
 
 def bilan(cfg: Config, prix: float, travaux: float, loyer_mensuel: float, neuf: bool,
           valeur_actuelle: float, tendance: float, surface: float, type_local: str,
-          charges_copro: float | None = None, taxe_fonciere: float | None = None) -> Bilan:
+          charges_copro: float | None = None, taxe_fonciere: float | None = None,
+          taux_frais: float | None = None) -> Bilan:
     f, fin, fis = cfg.frais, cfg.financement, cfg.fiscalite
-    notaire = prix * (f.notaire_neuf if neuf else f.notaire_ancien)
+    if taux_frais is None:
+        taux_frais = f.notaire_neuf if neuf else f.notaire_ancien
+    notaire = prix * taux_frais
     cout = prix + notaire + travaux
     apport = cout * fin.apport_pct
     emprunt = cout - apport

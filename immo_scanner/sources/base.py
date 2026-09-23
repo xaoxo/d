@@ -32,6 +32,8 @@ class Annonce:
     taxe_fonciere: float | None = None
     neuf: bool = False
     date_publication: str | None = None
+    mode_vente: str | None = None           # vente | enchere | offre (vente interactive / État)
+    date_vente: str | None = None           # date d'audience / de fin des offres
 
     @property
     def id(self) -> str:
@@ -99,8 +101,10 @@ def resolve_commune(conn, a: Annonce) -> None:
     a.ville = a.ville or rows[0]["nom_commune"]
 
 
-def save(conn, annonces) -> tuple[int, int]:
-    """Insère ou met à jour les annonces. Conserve le premier prix vu pour détecter les baisses."""
+def save(conn, annonces, evenements: list | None = None) -> tuple[int, int]:
+    """Insère ou met à jour les annonces. Conserve le premier prix vu pour détecter les baisses.
+
+    Si ``evenements`` est une liste, y ajoute ("nouveau", id) et ("baisse", id, ancien_prix)."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     new = updated = 0
     cols = [f.name for f in fields(Annonce) if f.name not in ("source_id",)]
@@ -112,8 +116,10 @@ def save(conn, annonces) -> tuple[int, int]:
         data = asdict(a)
         data.pop("source_id")
         data["neuf"] = int(bool(a.neuf))
-        existing = conn.execute("SELECT prix_initial FROM annonces WHERE id=?", (a.id,)).fetchone()
+        existing = conn.execute("SELECT prix FROM annonces WHERE id=?", (a.id,)).fetchone()
         if existing:
+            if evenements is not None and existing["prix"] and a.prix < existing["prix"]:
+                evenements.append(("baisse", a.id, existing["prix"]))
             sets = ",".join(f"{c}=?" for c in cols)
             conn.execute(f"UPDATE annonces SET {sets}, derniere_vue=?, active=1 WHERE id=?",
                          [data[c] for c in cols] + [now, a.id])
@@ -124,5 +130,7 @@ def save(conn, annonces) -> tuple[int, int]:
                 f"VALUES (?, {','.join('?' * len(cols))}, ?, ?, ?)",
                 [a.id] + [data[c] for c in cols] + [a.prix, now, now])
             new += 1
+            if evenements is not None:
+                evenements.append(("nouveau", a.id))
     conn.commit()
     return new, updated

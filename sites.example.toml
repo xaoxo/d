@@ -1,0 +1,19 @@
+# Profils de sites : copiez ce fichier en « sites.toml » (dans le même dossier) pour
+# ajuster un site existant ou ajouter le vôtre. Vérifiez avec : immo sites-tester
+
+# Désactiver un site :
+# [sites.notaires]
+# actif = false
+
+# Corriger le motif des liens d'annonce d'un site (expression régulière) :
+# [sites.licitor]
+# liens_annonce = "licitor\\.com/annonce/"
+
+# Ajouter le site d'une agence (idéalement un site qui publie ses biens en schema.org) :
+# [sites.mon-agence]
+# libelle = "Agence du centre"
+# depart = ["https://www.mon-agence.fr/nos-biens-a-vendre"]
+# liens_annonce = "mon-agence\\.fr/bien/\\d+"
+# liens_liste = "mon-agence\\.fr/nos-biens-a-vendre\\?page=\\d+"
+# mode_vente = "vente"        # vente | enchere | offre
+# max_pages = 100

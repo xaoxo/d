@@ -76,6 +76,35 @@ optionnelles : `type`, `pieces`, `ville`, `dpe`, `description`, `loyer_actuel`,
 `charges_annuelles`, `taxe_fonciere`, `surface_terrain`, `url`… Les noms anglais (`price`,
 `area`, `zipcode`…) sont aussi reconnus.
 
+## Surveillance en temps réel (enchères, notaires, État)
+
+```bash
+immo sites                                   # sites disponibles
+immo sites-tester                            # diagnostic : que renvoie chaque site ?
+immo surveiller --departements 33 40 --intervalle 30
+```
+
+Toutes les 30 minutes, le programme parcourt les sites activés : Licitor et Avoventes (enchères
+judiciaires), cessions de l'État, immobilier des notaires et 36h-immo. Il lit chaque nouvelle annonce,
+télécharge au besoin les ventes DVF du département, analyse le bien et envoie une alerte si :
+- le score dépasse `score_min`, ou la décote dépasse `decote_min` ;
+- pour une enchère, la mise à prix est sous **l'offre maximale conseillée**. Cette offre est le prix
+  jusqu'où enchérir en gardant `marge_cible` de marge, frais d'adjudication et travaux compris ;
+- le prix d'une annonce déjà vue baisse d'au moins `baisse_min`.
+
+Chaque alerte n'est envoyée qu'une fois. `rapport.html` est régénéré à chaque passage et peut
+être filtré par type de vente.
+
+**Alertes sur le téléphone (Telegram, gratuit)** : dans Telegram, écrivez à `@BotFather` et envoyez
+`/newbot` : il vous donne un *token*. Envoyez ensuite un message à votre bot et ouvrez
+`https://api.telegram.org/bot<TOKEN>/getUpdates` pour lire votre `chat.id`. Renseignez les deux
+dans la section `[alertes]` d'un fichier `config.toml` (copie de `config.example.toml`).
+
+**Profils de sites** : les motifs de liens par défaut ont été écrits sans pouvoir consulter les
+sites. Si `immo sites-tester` n'affiche pas « OK » pour un site, ajustez-le dans `sites.toml`
+(voir `sites.example.toml`). Ce fichier sert aussi à ajouter des sites d'agences. Le collecteur
+respecte `robots.txt` et attend 2 s entre deux requêtes.
+
 ## D'où viennent les annonces ?
 
 Les grands portails (Leboncoin, SeLoger, etc.) interdisent la collecte automatisée dans leurs
@@ -91,8 +120,8 @@ Ajouter une source = écrire une fonction qui renvoie des objets `Annonce`
 ## Hypothèses
 
 Toutes les hypothèses (apport, taux, durée, TMI, régime fiscal, vacance, coûts de travaux,
-pondérations du score…) sont modifiables : copiez `config.example.toml` et passez
-`--config ma_config.toml`.
+pondérations du score, alertes…) sont modifiables : copiez `config.example.toml` en
+`config.toml` (chargé automatiquement) ou passez `--config ma_config.toml`.
 
 ## Limites
 

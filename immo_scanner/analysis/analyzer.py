@@ -116,6 +116,9 @@ def analyser(conn, cfg: Config, market: MarketModel, a) -> dict:
     texte = normalize(f"{a.get('titre') or ''} {a.get('description') or ''}")
     dpe = a.get("dpe")
     signaux, alertes = [], []
+    mode = a.get("mode_vente") or "vente"
+    enchere, interactif = mode == "enchere", mode in ("enchere", "offre")
+    taux_frais = cfg.encheres.frais_pct if enchere else None
 
     est = market.estimer(type_local, surface, a.get("code_commune"), a.get("lat"), a.get("lon"))
     tend = market.tendance(a["code_commune"], type_local) if a.get("code_commune") else None
@@ -137,6 +140,12 @@ def analyser(conn, cfg: Config, market: MarketModel, a) -> dict:
             valeur_renovee = valeur_etat
             decote = (valeur_etat - prix) / valeur_etat
 
+    # --- enchères / ventes à offres : offre maximale conseillée ---
+    offre_max = None
+    if interactif and valeur_renovee:
+        frais = cfg.encheres.frais_pct if enchere else cfg.frais.notaire_ancien
+        offre_max = max(0.0, (valeur_renovee * (1 - cfg.encheres.marge_cible) - travaux) / (1 + frais))
+
     # --- loyer ---
     loyer, niveau_loyer = (a["loyer_actuel"], "annonce") if a.get("loyer_actuel") else \
         estimer_loyer(conn, cfg, a.get("code_commune"), type_local, surface)
@@ -145,9 +154,19 @@ def analyser(conn, cfg: Config, market: MarketModel, a) -> dict:
     if loyer:
         b = bilan(cfg, prix, travaux, loyer, bool(a.get("neuf")),
                   valeur_renovee or valeur_etat or prix, taux_tendance or 0.0, surface, type_local,
-                  a.get("charges_annuelles"), a.get("taxe_fonciere"))
+                  a.get("charges_annuelles"), a.get("taxe_fonciere"), taux_frais)
 
     # --- signaux ---
+    if interactif:
+        quoi = "Enchère judiciaire" if enchere else "Vente à offres"
+        depart = "mise à prix" if enchere else "prix de départ"
+        if offre_max is not None:
+            txt = (f"{quoi} : {depart} {prix:,.0f} €, offre max conseillée {offre_max:,.0f} € "
+                   f"(marge {cfg.encheres.marge_cible:.0%}, frais et travaux inclus)").replace(",", " ")
+            (signaux if offre_max > prix else alertes).append(txt)
+        if a.get("date_vente"):
+            signaux.append(f"Date de vente / fin des offres : {a['date_vente']}")
+        alertes.append(f"Décote calculée sur la {depart} : le prix final sera plus élevé")
     if decote is not None:
         if travaux:
             if decote >= 0.10:
@@ -181,6 +200,8 @@ def analyser(conn, cfg: Config, market: MarketModel, a) -> dict:
 
     exclu = False
     for label, rx in MOTS_EXCLUSION.items():
+        if interactif and label == "enchères":
+            continue
         if re.search(rx, texte):
             alertes.append(f"Vente atypique ({label}) : le prix affiché n'est pas comparable au marché")
             exclu = True
@@ -216,6 +237,8 @@ def analyser(conn, cfg: Config, market: MarketModel, a) -> dict:
         "source_loyer": niveau_loyer,
         "bilan": asdict(b) if b else None,
         "composantes_score": comp,
+        "mode_vente": mode,
+        "offre_max": offre_max,
         "signaux": signaux,
         "alertes": alertes,
     }

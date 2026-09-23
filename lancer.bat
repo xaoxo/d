@@ -37,6 +37,9 @@ echo  4. Importer un fichier d'annonces (CSV/JSON) et ouvrir le rapport
 echo  5. Ouvrir le rapport des annonces deja importees
 echo  6. Importer un fichier de loyers manuellement
 echo  7. Etat de la base
+echo  --- SURVEILLANCE TEMPS REEL ---
+echo  8. Surveiller encheres, notaires, Etat, 36h-immo (alertes)
+echo  T. Tester les sites (diagnostic)
 echo  --- TEST ---
 echo  9. Demo (donnees FICTIVES, base separee)
 echo  Q. Quitter
@@ -51,6 +54,8 @@ if "%CHOIX%"=="4" goto import
 if "%CHOIX%"=="5" goto rapport
 if "%CHOIX%"=="6" goto loyers
 if "%CHOIX%"=="7" goto stats
+if "%CHOIX%"=="8" goto surveiller
+if /i "%CHOIX%"=="T" goto tester
 if "%CHOIX%"=="9" goto demo
 if /i "%CHOIX%"=="Q" exit /b 0
 goto menu
@@ -118,4 +123,27 @@ goto menu
 
 :stats
 %PY% -m immo_scanner.cli stats
+goto menu
+
+:surveiller
+set DEP=
+set INT=
+set /p DEP=Departement(s) a surveiller (ex: 33 40, vide = toute la France) : 
+set /p INT=Minutes entre deux passages [30] : 
+if "%INT%"=="" set INT=30
+echo.
+echo Surveillance lancee : laissez cette fenetre ouverte. Le rapport rapport.html est mis a jour
+echo a chaque passage. Ctrl+C pour arreter.
+if "%DEP%"=="" (
+  %PY% -m immo_scanner.cli surveiller --intervalle %INT%
+) else (
+  %PY% -m immo_scanner.cli surveiller --intervalle %INT% --departements %DEP%
+)
+goto menu
+
+:tester
+%PY% -m immo_scanner.cli sites-tester
+echo.
+echo Copiez ce diagnostic a l'assistant si un site affiche autre chose que "OK".
+pause
 goto menu

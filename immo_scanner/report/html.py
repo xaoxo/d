@@ -55,6 +55,8 @@ a{color:var(--accent)}.note{color:var(--muted);font-size:12px;margin-top:16px}
 <input id="pmax" type="number" placeholder="Prix max €">
 <input id="smin" type="number" placeholder="Score min">
 <select id="verdict"><option value="">Tous verdicts</option></select>
+<select id="mode"><option value="">Toutes ventes</option><option value="vente">Vente classique</option>
+<option value="enchere">Enchères</option><option value="offre">Ventes à offres</option></select>
 </div>
 <div class="wrap"><table><thead><tr>
 <th data-k="score">Score</th><th class="l" data-k="verdict">Verdict</th><th class="l" data-k="ville">Ville</th>
@@ -80,9 +82,9 @@ let sortKey="score", sortDir=-1, open=new Set();
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
 function filtered(){
   const q=$("#q").value.toLowerCase(), t=$("#type").value, pm=+$("#pmax").value||Infinity,
-        sm=+$("#smin").value||-Infinity, v=$("#verdict").value;
+        sm=+$("#smin").value||-Infinity, v=$("#verdict").value, md=$("#mode").value;
   return DATA.filter(r=>(!q||(r.ville+" "+r.titre+" "+r.code_postal).toLowerCase().includes(q))
-    &&(!t||r.type_local===t)&&r.prix<=pm&&r.score>=sm&&(!v||r.verdict===v))
+    &&(!t||r.type_local===t)&&r.prix<=pm&&r.score>=sm&&(!v||r.verdict===v)&&(!md||(r.mode_vente||"vente")===md))
    .sort((a,b)=>{const x=a[sortKey],y=b[sortKey];if(x==null)return 1;if(y==null)return -1;
      return (x>y?1:x<y?-1:0)*sortDir});
 }
@@ -99,7 +101,9 @@ function detail(r){
    <dt>Ventes/an commune</dt><dd>${(e.ventes_par_an_commune||0).toFixed(0)}</dd>
    <dt>Tendance prix</dt><dd class="${cls(r.tendance_annuelle)}">${pct(r.tendance_annuelle)}/an</dd>
    <dt>Travaux estimés</dt><dd>${eur(d.travaux_estimes)}</dd>
-   <dt>Valeur après travaux</dt><dd>${eur(d.valeur_apres_travaux)}</dd></dl></div>
+   <dt>Valeur après travaux</dt><dd>${eur(d.valeur_apres_travaux)}</dd>
+   ${d.offre_max!=null?`<dt><b>Offre max conseillée</b></dt><dd><b>${eur(d.offre_max)}</b></dd>`:""}
+   ${r.date_vente?`<dt>Date de vente</dt><dd>${esc(r.date_vente)}</dd>`:""}</dl></div>
   <div><h4>Location &amp; financement</h4><dl>
    <dt>Loyer mensuel (${esc(d.source_loyer||"—")})</dt><dd>${eur(b.loyer_mensuel)}</dd>
    <dt>Coût total (notaire, travaux)</dt><dd>${eur(b.cout_total)}</dd>
@@ -132,7 +136,7 @@ function render(){
     .map(([l,v])=>`<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join("");
   $("#tb").innerHTML=rows.map(r=>`<tr class="row" data-id="${esc(r.id)}">
    <td><span class="score" style="background:${color(r.score)}">${r.score.toFixed(0)}</span></td>
-   <td class="l">${esc(r.verdict)}</td><td class="l">${esc(r.ville||r.code_commune)} <small>${esc(r.code_postal)}</small></td>
+   <td class="l">${esc(r.verdict)}${r.mode_vente&&r.mode_vente!=="vente"?` <small>(${r.mode_vente==="enchere"?"enchère":"offres"})</small>`:""}</td><td class="l">${esc(r.ville||r.code_commune)} <small>${esc(r.code_postal)}</small></td>
    <td class="l">${esc(r.type_local)}</td><td>${Math.round(r.surface)}</td><td>${eur(r.prix)}</td>
    <td>${eur(r.valeur_estimee)}</td><td class="${cls(r.decote_pct)}">${pct(r.decote_pct,0)}</td>
    <td>${pct(r.rendement_brut)}</td><td>${pct(r.rendement_net)}</td>
@@ -145,7 +149,7 @@ $("#tb").addEventListener("click",e=>{const tr=e.target.closest("tr.row");if(!tr
   const id=tr.dataset.id;open.has(id)?open.delete(id):open.add(id);render()});
 document.querySelectorAll("th").forEach(th=>th.addEventListener("click",()=>{const k=th.dataset.k;
   sortDir=(k===sortKey)?-sortDir:-1;sortKey=k;render()}));
-["#q","#type","#pmax","#smin","#verdict"].forEach(s=>$(s).addEventListener("input",render));
+["#q","#type","#pmax","#smin","#verdict","#mode"].forEach(s=>$(s).addEventListener("input",render));
 render();
 </script>
 </body>

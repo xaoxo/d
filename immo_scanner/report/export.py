@@ -68,9 +68,11 @@ def to_csv(rows, path) -> None:
             "plus_value_horizon", "tendance_annuelle", "fiabilite"]
     with open(path, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh, delimiter=";")
-        w.writerow(cols + ["loyer_estime", "travaux_estimes", "signaux", "alertes"])
+        w.writerow(cols + ["mode_vente", "date_vente", "offre_max", "loyer_estime", "travaux_estimes",
+                           "signaux", "alertes"])
         for r in rows:
             d = r["details"]
             w.writerow([r.get(c) for c in cols] + [
+                r.get("mode_vente"), r.get("date_vente"), d.get("offre_max"),
                 d.get("loyer_mensuel_estime"), d.get("travaux_estimes"),
                 " | ".join(d.get("signaux", [])), " | ".join(d.get("alertes", []))])

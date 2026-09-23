@@ -189,6 +189,65 @@ def cmd_estimer(args, conn, cfg):
         print(f"  ! {s}")
 
 
+def _choisir_sites(args):
+    from .sources import sites as sites_mod
+    tous = sites_mod.charger_sites(args.sites_config)
+    if not args.sites or args.sites == ["all"]:
+        return [s for s in tous.values() if s.actif]
+    inconnus = [n for n in args.sites if n not in tous]
+    if inconnus:
+        raise SystemExit(f"Site(s) inconnu(s) : {', '.join(inconnus)}. Disponibles : {', '.join(tous)}")
+    return [tous[n] for n in args.sites]
+
+
+def cmd_sites(args, conn, cfg):
+    from .sources import sites as sites_mod
+    for s in sites_mod.charger_sites(args.sites_config).values():
+        print(f"{'[actif]  ' if s.actif else '[inactif]'} {s.nom:<12} {s.libelle}  ({s.mode_vente})")
+        if s.notes:
+            print(f"              {s.notes}")
+
+
+def cmd_sites_tester(args, conn, cfg):
+    """Diagnostic : ce que chaque site renvoie, sans rien enregistrer."""
+    from .sources import sites as sites_mod
+    from .sources.web import Crawler
+    for site in _choisir_sites(args):
+        print(f"\n=== {site.libelle} ===")
+        s = sites_mod.Site(**{**site.__dict__, "max_pages": args.max_pages})
+        rep = sites_mod.collecter(s, Crawler(delay=args.delai), args.departements, log=lambda *_: None)
+        print(f"Pages de liste lues     : {rep.pages_liste}")
+        print(f"Liens d'annonce trouvés : {rep.liens_annonce_trouves}")
+        print(f"Fiches lues             : {rep.pages_annonce}")
+        print(f"Annonces extraites      : {len(rep.annonces)}  (hors département : {rep.hors_departement})")
+        for a in rep.annonces[:5]:
+            a.normalized()
+            print(f"   - {a.prix:,.0f} € · {a.surface} m² · {a.code_postal or '?'} {a.ville or ''} · "
+                  f"{(a.titre or '')[:50]}  {a.url}".replace(",", " "))
+        for u in rep.illisibles[:3]:
+            print(f"   ? fiche non comprise : {u}")
+        for u in rep.bloques_robots[:3]:
+            print(f"   ! interdit par robots.txt : {u}")
+        for e in rep.erreurs[:3]:
+            print(f"   ! erreur : {e}")
+        if not rep.pages_liste:
+            print("=> Site injoignable. Copiez ce diagnostic à l'assistant pour corriger le profil.")
+        elif not rep.liens_annonce_trouves:
+            print("=> Aucun lien d'annonce reconnu : le motif « liens_annonce » est à ajuster "
+                  "(ou le site charge ses annonces en JavaScript).")
+        elif not rep.annonces:
+            print("=> Liens trouvés mais fiches non comprises : le site ne publie ni données "
+                  "structurées ni prix/surface lisibles.")
+        else:
+            print("=> OK")
+
+
+def cmd_surveiller(args, conn, cfg):
+    from . import surveillance
+    surveillance.surveiller(conn, cfg, _choisir_sites(args), args.departements, Path(args.cache),
+                            args.rapport, args.intervalle, args.une_fois, args.delai)
+
+
 def cmd_stats(args, conn, cfg):
     q = lambda sql: conn.execute(sql).fetchone()[0]  # noqa: E731
     print(f"Ventes DVF        : {q('SELECT COUNT(*) FROM dvf_ventes')}")
@@ -227,8 +286,9 @@ def cmd_demo(args, conn, cfg):
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="immo", description="Scanner d'opportunités immobilières (France)")
     p.add_argument("--db", default=str(db.DEFAULT_DB), help="base SQLite (défaut : data/immo.db)")
-    p.add_argument("--config", help="fichier TOML d'hypothèses (voir config.example.toml)")
+    p.add_argument("--config", help="fichier TOML d'hypothèses (défaut : config.toml s'il existe ; voir config.example.toml)")
     p.add_argument("--cache", default="data/cache", help="dossier de téléchargement")
+    p.add_argument("--sites-config", default="sites.toml", help="profils de sites personnalisés")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("dvf", help="importer les ventes DVF (data.gouv.fr)")
@@ -307,6 +367,24 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--description", default="")
     s.set_defaults(func=cmd_estimer)
 
+    s = sub.add_parser("sites", help="lister les sites surveillables")
+    s.set_defaults(func=cmd_sites)
+
+    for name, helptext in (("sites-tester", "diagnostiquer ce que chaque site renvoie (n'enregistre rien)"),
+                           ("surveiller", "surveiller les sites en continu et envoyer des alertes")):
+        s = sub.add_parser(name, help=helptext)
+        s.add_argument("--sites", nargs="+", help="noms des sites (défaut : tous les sites actifs)")
+        s.add_argument("--departements", nargs="+", help="ne garder que ces départements")
+        s.add_argument("--delai", type=float, default=2.0, help="secondes entre deux requêtes")
+        if name == "sites-tester":
+            s.add_argument("--max-pages", type=int, default=15)
+            s.set_defaults(func=cmd_sites_tester)
+        else:
+            s.add_argument("--intervalle", type=float, default=30, help="minutes entre deux passages")
+            s.add_argument("--une-fois", action="store_true", help="un seul passage (planificateur de tâches)")
+            s.add_argument("--rapport", default="rapport.html", help="rapport HTML mis à jour à chaque passage")
+            s.set_defaults(func=cmd_surveiller)
+
     s = sub.add_parser("stats", help="état de la base")
     s.set_defaults(func=cmd_stats)
 
@@ -318,7 +396,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    cfg = load_config(args.config)
+    # config.toml à côté du programme est chargé automatiquement (alertes Telegram, hypothèses…)
+    cfg = load_config(args.config or ("config.toml" if Path("config.toml").exists() else None))
     conn = db.connect(args.db)
     try:
         args.func(args, conn, cfg)

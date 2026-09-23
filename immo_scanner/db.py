@@ -72,9 +72,19 @@ CREATE TABLE IF NOT EXISTS annonces (
     taxe_fonciere     REAL,
     neuf              INTEGER DEFAULT 0,
     date_publication  TEXT,
+    mode_vente        TEXT,
+    date_vente        TEXT,
     premiere_vue      TEXT,
     derniere_vue      TEXT,
     active            INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS alertes_envoyees (
+    annonce_id  TEXT NOT NULL,
+    evenement   TEXT NOT NULL,         -- nouveau | baisse
+    prix        REAL,
+    envoye_le   TEXT,
+    PRIMARY KEY (annonce_id, evenement, prix)
 );
 
 CREATE TABLE IF NOT EXISTS analyses (
@@ -106,4 +116,14 @@ def connect(path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
+    _migrer(conn)
     return conn
+
+
+def _migrer(conn) -> None:
+    """Ajoute les colonnes apparues dans les versions récentes aux bases existantes."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(annonces)")}
+    for col in ("mode_vente", "date_vente"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE annonces ADD COLUMN {col} TEXT")
+    conn.commit()

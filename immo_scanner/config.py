@@ -75,6 +75,27 @@ class Projection:
 
 
 @dataclass
+class Encheres:
+    frais_pct: float = 0.12        # frais d'adjudication : droits, émoluments, avocat (≈ 10-15 %)
+    marge_cible: float = 0.20      # marge de sécurité visée sous la valeur de marché
+
+
+@dataclass
+class Alertes:
+    score_min: float = 60.0        # alerter sur les nouvelles annonces au-dessus de ce score…
+    decote_min: float = 0.15       # …ou avec au moins cette décote
+    baisse_min: float = 0.03       # alerter sur les baisses de prix d'au moins 3 %
+    windows: bool = True           # notification Windows
+    telegram_token: str = ""       # bot Telegram (voir README)
+    telegram_chat_id: str = ""
+    email_smtp: str = ""           # ex : smtp.gmail.com
+    email_port: int = 465
+    email_utilisateur: str = ""
+    email_mot_de_passe: str = ""   # Gmail : « mot de passe d'application »
+    email_destinataire: str = ""
+
+
+@dataclass
 class Scoring:
     poids: dict = field(default_factory=lambda: {
         "decote": 0.30, "rendement": 0.25, "tri": 0.15,
@@ -91,6 +112,8 @@ class Config:
     travaux: Travaux = field(default_factory=Travaux)
     projection: Projection = field(default_factory=Projection)
     scoring: Scoring = field(default_factory=Scoring)
+    encheres: Encheres = field(default_factory=Encheres)
+    alertes: Alertes = field(default_factory=Alertes)
 
 
 def _apply(obj, values: dict) -> None:
