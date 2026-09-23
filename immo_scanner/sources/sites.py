@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import tomllib
+import urllib.parse
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -37,6 +38,7 @@ class Site:
     actif: bool = True
     notes: str = ""
     depart_par_departement: list[str] = field(default_factory=list)   # URL avec {dep}
+    modes_url: dict = field(default_factory=dict)   # {motif d'URL: mode de vente}
     api: str = ""                       # API JSON paginée, avec {page} (et éventuellement {dep})
     api_premiere_page: int = 1
 
@@ -47,11 +49,14 @@ SITES_DEFAUT = [
          liens_annonce=r"licitor\.com/annonce/",
          liens_liste=r"licitor\.com/ventes-(?:aux-encheres|judiciaires)-immobilieres/[^?#]*",
          mode_vente="enchere"),
-    Site("avoventes", "Avoventes — enchères judiciaires (Conseil national des barreaux)",
-         ["https://www.avoventes.fr/"],
-         liens_annonce=r"avoventes\.fr/(?:vente|ventes|annonce|lot|bien)s?/[^?#]+",
-         liens_liste=r"avoventes\.fr/(?:ventes|recherche|encheres|annonces)(?:[/?][^#]*)?$",
-         mode_vente="enchere"),
+    Site("avoventes", "Avoventes — enchères judiciaires et ventes amiables d'avocats",
+         ["https://www.avoventes.fr/recherche/toutes?sort=date&order=desc&display=liste",
+          "https://www.avoventes.fr/ventes-aux-encheres", "https://www.avoventes.fr/ventes-amiables"],
+         liens_annonce=r"avoventes\.fr/(?:enchere|encheres|vente-amiable|amiable|vente)/[a-z0-9][^?#\"'\s]*",
+         liens_liste=r"avoventes\.fr/(?:recherche/toutes\?[^#]*page=\d+|ventes-aux-encheres\?[^#]*page=\d+|"
+                     r"ventes-amiables\?[^#]*page=\d+)",
+         mode_vente="enchere",
+         modes_url={r"amiable": "vente", r"/encheres?/": "enchere"}),
     Site("etat", "Cessions immobilières de l'État",
          ["https://cessions.immobilier-etat.gouv.fr/"],
          liens_annonce=r"cessions\.immobilier-etat\.gouv\.fr/(?:bien|biens|annonce|annonces)/[^?#]+",
@@ -69,9 +74,9 @@ SITES_DEFAUT = [
              "?page={page}&parPage=48&typeTransactions=VENTE,VNI,VAE",
          notes="Annonces chargées en JavaScript : lecture via l'API JSON du site (adresse à confirmer)."),
     Site("36h-immo", "36h-immo — ventes notariales interactives",
-         ["https://www.36h-immo.com/"],
-         liens_annonce=r"36h-immo\.com/(?:bien|biens|annonce|annonces|vente|ventes)/[^?#]+",
-         liens_liste=r"36h-immo\.com/(?:recherche|biens|ventes|annonces)(?:[/?][^#]*)?$",
+         ["https://www.36h-immo.com/fr/annonces/ventes-interactives-immobilieres-en-ligne.html"],
+         liens_annonce=r"36h-immo\.com/fr/(?:annonce|vente|bien|immobilier)[^?#\"'\s]*?\d{3,}[^?#\"'\s]*",
+         liens_liste=r"36h-immo\.com/fr/annonces/[^#]*(?:page|p)=\d+",
          mode_vente="offre",
          notes="Les ventes 36h-immo sont aussi publiées sur le site des notaires (type VNI)."),
 ]
@@ -132,7 +137,10 @@ def collecter(site: Site, crawler: Crawler, departements=None, deja_vues: set | 
     deps = {d.upper() for d in departements} if departements else None
 
     def garder(a) -> bool:
-        if a.mode_vente in (None, "vente"):
+        mode_url = next((m for rx, m in site.modes_url.items() if a.url and re.search(rx, a.url)), None)
+        if mode_url:
+            a.mode_vente = mode_url
+        elif a.mode_vente in (None, "vente"):
             a.mode_vente = site.mode_vente
         if deps:
             dep = departement_annonce(a.normalized())
@@ -184,13 +192,19 @@ def collecter(site: Site, crawler: Crawler, departements=None, deja_vues: set | 
                                  html, re.I)[:20]:
             if indice not in rep.indices_api:
                 rep.indices_api.append(indice)
+        # liens présents dans le code de la page sans balise <a> (cartes générées en JavaScript…)
+        for brut in re.findall(r"""(?:https?:)?//[^"'\s<>]+|(?<=["'])/[^"'\s<>]+""", html):
+            complet = urllib.parse.urljoin(url, brut.replace("\\/", "/"))
+            if rx_annonce.search(complet):
+                liens.append(complet)
         for lien in liens:
             lien = lien.split("#")[0]
             if hote in lien and lien not in rep.exemples_liens and len(rep.exemples_liens) < 60:
                 rep.exemples_liens.append(lien)
             if rx_annonce.search(lien):
-                if lien not in vues_fiche:
-                    vues_fiche.add(lien)
+                cle = re.sub(r"://www\.", "://", lien).rstrip("/")     # www.x.fr et x.fr = même fiche
+                if cle not in vues_fiche:
+                    vues_fiche.add(cle)
                     fiches.append(lien)
             elif rx_liste and rx_liste.search(lien) and lien not in vues_liste:
                 listes.append(lien)

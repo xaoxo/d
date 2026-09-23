@@ -206,3 +206,37 @@ def test_geo():
     assert geo.code_arrondissement("Lyon 3e") == "69383"
     assert geo.code_arrondissement("Marseille 8ème arrondissement") == "13208"
     assert geo.code_arrondissement("Parisot") is None
+
+
+def test_liens_caches_dans_le_code_et_mode_par_url(serveur, tmp_path):
+    (tmp_path / "recherche.html").write_text(
+        '<html><div id="app"></div><script>window.__DATA__ = {"ventes": ['
+        '{"lien": "\\/enchere\\/un-appartement-a-bordeaux"}, {"lien": "/vente-amiable/une-maison-a-pessac"},'
+        '{"lien": "' + serveur.replace("127.0.0.1", "localhost") + '/enchere/un-appartement-a-bordeaux"}]}'
+        '</script></html>')
+    (tmp_path / "enchere").mkdir()
+    (tmp_path / "enchere" / "un-appartement-a-bordeaux").write_text(PAGE_ENCHERE)
+    (tmp_path / "vente-amiable").mkdir()
+    (tmp_path / "vente-amiable" / "une-maison-a-pessac").write_text(
+        PAGE_ENCHERE.replace("Mise à prix : 45 000 €", "Prix : 245 000 €").replace("Bordeaux", "Pessac")
+        .replace("33000", "33600"))
+    from immo_scanner.sources.web import Crawler
+    s = sites.Site("avo", "test", [serveur + "/recherche.html"],
+                   liens_annonce=r"/(?:enchere|vente-amiable)/[a-z0-9][^?#\"'\s]*",
+                   mode_vente="enchere", modes_url={"amiable": "vente"})
+    rep = sites.collecter(s, Crawler(delay=0), log=lambda *_: None)
+    modes = sorted((a.mode_vente, a.prix) for a in rep.annonces)
+    assert modes == [("enchere", 45000), ("vente", 245000)]
+
+
+def test_robots_403_ne_bloque_pas(monkeypatch):
+    import urllib.error
+    from immo_scanner.sources import web
+
+    def refuse(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(web.urllib.request, "urlopen", refuse)
+    c = web.Crawler(delay=0)
+    assert c.allowed("https://exemple.gouv.fr/page")
+    assert "403" in c.explication_robots("https://exemple.gouv.fr/page")

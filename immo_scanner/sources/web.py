@@ -141,8 +141,10 @@ class Crawler:
     def _lire_robots(self, base: str):
         """Lit robots.txt avec NOTRE identité (celle de Python est souvent refusée d'office).
 
-        Renvoie (parser ou None, statut lisible). Conformément à la RFC 9309 : fichier absent
-        (404…) = tout est permis ; accès refusé (401/403) = on s'abstient par prudence."""
+        Renvoie (parser ou None, statut lisible). Conformément à la RFC 9309 (norme robots.txt,
+        appliquée aussi par Google) : un robots.txt indisponible (erreur 4xx, y compris 401/403)
+        ne pose aucune règle. Si les pages elles-mêmes nous sont refusées, la collecte s'arrête
+        là : aucune tentative de contournement."""
         req = urllib.request.Request(base + "/robots.txt", headers={"User-Agent": USER_AGENT})
         rp = urllib.robotparser.RobotFileParser(base + "/robots.txt")
         try:
@@ -151,10 +153,7 @@ class Crawler:
             rp.parse(texte.splitlines())
             return rp, "200", texte
         except urllib.error.HTTPError as exc:
-            if exc.code in (401, 403):
-                rp.disallow_all = True
-                return rp, f"{exc.code} (le site refuse de montrer son robots.txt aux robots)", ""
-            return None, f"{exc.code} (pas de robots.txt : tout est permis)", ""
+            return None, f"{exc.code} (robots.txt indisponible : aucune règle, RFC 9309)", ""
         except Exception as exc:  # noqa: BLE001 - site injoignable : l'erreur remontera au get()
             return None, f"injoignable ({exc})", ""
 
