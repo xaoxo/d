@@ -19,11 +19,11 @@ if not defined PY (
 )
 
 REM --- Installation (une seule fois) ---
-if not exist data\.installe (
+if not exist data\.installe-0.2.0 (
   echo Installation en cours...
   %PY% -m pip install -e . || (echo Echec de l'installation. & pause & exit /b 1)
   if not exist data mkdir data
-  echo ok> data\.installe
+  echo ok> data\.installe-0.2.0
 )
 
 :menu

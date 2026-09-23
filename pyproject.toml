@@ -4,11 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "immo-scanner"
-version = "0.1.0"
+version = "0.2.0"
 description = "Scanner d'opportunités immobilières en France : rentabilité, biens sous-évalués, potentiel de plus-value (DVF + loyers + annonces)."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    # Vérification TLS par le système (Windows/macOS) : complète les chaînes de certificats
+    # incomplètes comme le fait le navigateur (ex. cessions.immobilier-etat.gouv.fr).
+    "truststore>=0.9",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]

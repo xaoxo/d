@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from html.parser import HTMLParser
 
+from ..geo import departement_depuis_nom
 from ..util import to_float
 from .base import Annonce
 
@@ -72,6 +73,10 @@ RX_CP_VILLE = re.compile(r"\b((?:0[1-9]|[1-8]\d|9[0-5])\d{3}|97[1-6]\d{2}|20[0-2
                          r"([A-ZÉÈÊÎÔÂÛÇ][A-Za-zÀ-ÿ'’\- ]{1,40}?)(?=\s*(?:\n|\(|,|;|\.|\||$| - ))")
 RX_VILLE_CP = re.compile(r"([A-ZÉÈÊÎÔÂÛÇ][A-Za-zÀ-ÿ'’\- ]{1,40}?)\s*\(\s*((?:0[1-9]|[1-8]\d|9[0-5])\d{3}|"
                          r"97[1-6]\d{2}|20[0-2]\d{2}|\d{2}|2[AB])\s*\)")
+# « … une villa à Ceyreste (Bouches-du-Rhône) », « appartement à Paris 15ème (Paris) »
+RX_TITRE_LIEU = re.compile(r"\b(?:à|a|sur la commune d[e'’]|commune d[e'’])\s*"
+                           r"([A-ZÉÈÊÎÔÂÛÇ][A-Za-zÀ-ÿ0-9'’\- ]{1,50}?)\s*\(([^)]{2,40})\)")
+RX_TITRE_VILLE = re.compile(r"\b(?:à|a)\s+([A-ZÉÈÊÎÔÂÛÇ][A-Za-zÀ-ÿ0-9'’\- ]{1,50}?)\s*$")
 MOIS = "janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[ûu]t|septembre|octobre|novembre|d[ée]cembre"
 RX_DATE_VENTE = re.compile(r"(?:audience|adjudication|vente\s+(?:le|du)|date\s+de\s+(?:la\s+)?vente|fin\s+des\s+offres|"
                            r"cl[ôo]ture|jusqu'au)\D{0,40}?(\d{1,2}(?:er)?\s+(?:" + MOIS + r")\s+20\d\d|\d{2}/\d{2}/20\d\d)",
@@ -93,6 +98,38 @@ def texte_page(html: str) -> tuple[str, str, dict]:
     texte = re.sub(r"\n\s*\n+", "\n", texte).strip()
     titre = (p.meta.get("og:title") or p.h1 or p.titre or "").strip()
     return titre, texte, p.meta
+
+
+def _cp_pres_de(ville: str, corps: str) -> str | None:
+    """Code postal écrit juste à côté du nom de la ville (« 13600 Ceyreste » / « Ceyreste (13600) »)."""
+    v = re.escape(ville.strip())
+    cp = r"((?:0[1-9]|[1-8]\d|9[0-5])\d{3}|97[1-6]\d{2}|20[0-2]\d{2})"
+    m = re.search(cp + r"\s*[-,]?\s*" + v + r"\b", corps, re.I) or \
+        re.search(r"\b" + v + r"\s*[-,(]?\s*" + cp + r"\b", corps, re.I)
+    return m.group(1) if m else None
+
+
+def localiser(titre: str, corps: str, url: str = "") -> tuple[str | None, str | None, str | None]:
+    """(code postal, ville, département) du BIEN.
+
+    Le premier code postal d'une page est souvent celui du tribunal, de l'avocat ou de
+    l'agence : on privilégie donc la ville citée dans le titre (« … à Ceyreste (Bouches-du-Rhône) »)
+    et on ne retient un code postal que s'il est écrit à côté de cette ville."""
+    m = RX_TITRE_LIEU.search(titre) or RX_TITRE_VILLE.search(titre)
+    if m:
+        ville = m.group(1).strip(" -")
+        departement = departement_depuis_nom(m.group(2)) if m.lastindex and m.lastindex >= 2 else None
+        cp = _cp_pres_de(ville, corps)
+        if cp and departement and not cp.startswith(departement[:2]):
+            cp = None
+        return cp, ville, departement
+    m = RX_CP_VILLE.search(corps)
+    if m:
+        return m.group(1), m.group(2).strip(" -"), None
+    m = RX_VILLE_CP.search(corps)
+    if m and len(m.group(2)) == 5:
+        return m.group(2), m.group(1).strip(" -"), None
+    return None, None, None
 
 
 def extraire(html: str, url: str, source: str, mode_vente: str = "vente") -> Annonce | None:
@@ -123,14 +160,7 @@ def extraire(html: str, url: str, source: str, mode_vente: str = "vente") -> Ann
     if not prix or not surface:
         return None
 
-    cp = ville = None
-    m = RX_CP_VILLE.search(corps)
-    if m:
-        cp, ville = m.group(1), m.group(2).strip(" -")
-    else:
-        m = RX_VILLE_CP.search(corps)
-        if m and len(m.group(2)) == 5:
-            ville, cp = m.group(1).strip(" -"), m.group(2)
+    cp, ville, departement = localiser(titre, corps, url)
 
     pieces = None
     m = RX_PIECES.search(corps)
@@ -146,7 +176,7 @@ def extraire(html: str, url: str, source: str, mode_vente: str = "vente") -> Ann
     return Annonce(
         source=source, source_id=url, url=url, titre=titre[:200] or None,
         prix=prix, surface=surface, pieces=pieces, surface_terrain=terrain,
-        code_postal=cp, ville=ville,
+        code_postal=cp, ville=ville, departement=departement,
         description=(meta.get("og:description", "") + "\n" + texte)[:3000],
         mode_vente=mode_vente, date_vente=date_vente,
     )

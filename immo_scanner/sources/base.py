@@ -23,6 +23,7 @@ class Annonce:
     code_postal: str | None = None
     code_commune: str | None = None
     ville: str | None = None
+    departement: str | None = None          # utile quand le code postal est inconnu
     lat: float | None = None
     lon: float | None = None
     dpe: str | None = None
@@ -81,24 +82,37 @@ def guess_dpe(description) -> str | None:
 
 
 def resolve_commune(conn, a: Annonce) -> None:
-    """Complète le code INSEE à partir du code postal (+ nom de ville) via la table DVF."""
-    if a.code_commune or not a.code_postal:
+    """Complète le code INSEE (et le code postal) à partir du code postal + ville,
+    ou à défaut de la ville + département, via la table des communes issue de DVF."""
+    from ..geo import code_arrondissement
+    if a.code_commune:
         return
-    rows = conn.execute("SELECT code_commune, nom_commune, nb FROM communes WHERE code_postal=? "
-                        "ORDER BY nb DESC", (a.code_postal,)).fetchall()
-    if not rows:
+    arr = code_arrondissement(a.ville)
+    if arr:
+        a.code_commune = arr
+        if not a.code_postal:
+            r = conn.execute("SELECT code_postal FROM communes WHERE code_commune=? ORDER BY nb DESC",
+                             (arr,)).fetchone()
+            a.code_postal = r["code_postal"] if r else None
         return
     ville = normalize(a.ville)
-    for r in rows:
-        if ville and normalize(r["nom_commune"]) == ville:
-            a.code_commune = r["code_commune"]
-            return
-    for r in rows:
-        if ville and (ville in normalize(r["nom_commune"]) or normalize(r["nom_commune"]) in ville):
-            a.code_commune = r["code_commune"]
-            return
-    a.code_commune = rows[0]["code_commune"]
-    a.ville = a.ville or rows[0]["nom_commune"]
+    if a.code_postal:
+        rows = conn.execute("SELECT code_commune, code_postal, nom_commune, nb FROM communes "
+                            "WHERE code_postal=? ORDER BY nb DESC", (a.code_postal,)).fetchall()
+    elif ville and a.departement:
+        rows = conn.execute("SELECT code_commune, code_postal, nom_commune, nb FROM communes "
+                            "WHERE code_commune LIKE ? ORDER BY nb DESC", (a.departement + "%",)).fetchall()
+        rows = [r for r in rows if normalize(r["nom_commune"]) == ville]
+    else:
+        return
+    if not rows:
+        return
+    choix = next((r for r in rows if ville and normalize(r["nom_commune"]) == ville), None) or \
+        next((r for r in rows if ville and (ville in normalize(r["nom_commune"])
+                                            or normalize(r["nom_commune"]) in ville)), None) or rows[0]
+    a.code_commune = choix["code_commune"]
+    a.code_postal = a.code_postal or choix["code_postal"]
+    a.ville = a.ville or choix["nom_commune"]
 
 
 def save(conn, annonces, evenements: list | None = None) -> tuple[int, int]:

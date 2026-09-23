@@ -225,26 +225,34 @@ def cmd_sites_tester(args, conn, cfg):
             a.normalized()
             print(f"   - {a.prix:,.0f} € · {a.surface} m² · {a.code_postal or '?'} {a.ville or ''} · "
                   f"{(a.titre or '')[:50]}  {a.url}".replace(",", " "))
-        for u in rep.illisibles[:3]:
-            print(f"   ? fiche non comprise : {u}")
+        for u, raison in rep.illisibles[:3]:
+            print(f"   ? fiche non comprise ({raison}) : {u}")
+        if s.api:
+            print(f"API JSON                : {rep.api_statut or 'non lue'}")
+            if rep.api_cles:
+                print("   clés trouvées : " + ", ".join(rep.api_cles))
         for u in rep.bloques_robots[:3]:
             print(f"   ! interdit par robots.txt : {u}")
         if rep.bloques_robots:
             print("     " + crawler.explication_robots(rep.bloques_robots[0]))
         for e in rep.erreurs[:3]:
             print(f"   ! erreur : {e}")
-        if rep.bloques_robots and not rep.pages_liste:
+        if rep.annonces:
+            print("=> OK" + (f" ({len(rep.illisibles)} fiche(s) sans prix ou surface ignorée(s))"
+                             if rep.illisibles else ""))
+        elif rep.bloques_robots and not rep.pages_liste:
             print("=> Le site interdit l'accès aux robots : il est ignoré. Copiez ce diagnostic à l'assistant.")
         elif not rep.pages_liste:
             print("=> Site injoignable. Copiez ce diagnostic à l'assistant pour corriger le profil.")
-        elif not rep.liens_annonce_trouves:
-            print("=> Aucun lien d'annonce reconnu : le motif « liens_annonce » est à ajuster "
-                  "(ou le site charge ses annonces en JavaScript).")
-        elif not rep.annonces:
+        elif not rep.liens_annonce_trouves and not rep.annonces:
+            print("=> Aucun lien d'annonce reconnu. Liens vus sur le site (pour l'assistant) :")
+            for lien in rep.exemples_liens[:40]:
+                print(f"     {lien}")
+            for indice in rep.indices_api[:10]:
+                print(f"     [api] {indice}")
+        else:
             print("=> Liens trouvés mais fiches non comprises : le site ne publie ni données "
                   "structurées ni prix/surface lisibles.")
-        else:
-            print("=> OK")
 
 
 def cmd_surveiller(args, conn, cfg):

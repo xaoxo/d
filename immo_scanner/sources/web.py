@@ -184,11 +184,14 @@ class Crawler:
                 regles.append(l)
         return f"robots.txt : statut {statut}" + ("\n       " + "\n       ".join(regles[:12]) if regles else "")
 
-    def get(self, url: str) -> str:
+    def get(self, url: str, accept: str | None = None) -> str:
         wait = self.delay - (time.monotonic() - self._last)
         if wait > 0:
             time.sleep(wait)
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "fr-FR"})
+        entetes = {"User-Agent": USER_AGENT, "Accept-Language": "fr-FR"}
+        if accept:
+            entetes["Accept"] = accept
+        req = urllib.request.Request(url, headers=entetes)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 charset = resp.headers.get_content_charset() or "utf-8"

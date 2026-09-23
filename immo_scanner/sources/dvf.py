@@ -46,6 +46,12 @@ def departement_depuis_cp(cp: str | None) -> str | None:
     return cp[:2]
 
 
+def departement_annonce(a) -> str | None:
+    return (a.departement or departement_depuis_cp(a.code_postal)
+            or (a.code_commune[:3] if a.code_commune and a.code_commune.startswith("97") else
+                a.code_commune[:2] if a.code_commune else None))
+
+
 def annees_par_defaut() -> list[int]:
     from datetime import date
     return list(range(date.today().year - 5, date.today().year))

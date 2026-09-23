@@ -68,7 +68,7 @@ def passage(conn, cfg: Config, sites: list, departements, cache: Path, rapport: 
     for site in sites:
         rep = sites_mod.collecter(site, crawler, departements, deja, log)
         for a in rep.annonces:
-            dep = dvf.departement_depuis_cp(a.normalized().code_postal)
+            dep = dvf.departement_annonce(a.normalized())
             if dep and dep not in deps_faits:
                 deps_faits.add(dep)
                 dvf.assurer_departement(conn, dep, cache, cfg.marche, log)

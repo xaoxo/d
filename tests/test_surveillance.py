@@ -33,7 +33,7 @@ INDEX = """<html><body>
 <a href="/ventes-aux-encheres-immobilieres/page-2.html">Suivante</a>
 <a href="/mentions-legales.html">Mentions</a></body></html>"""
 
-PAGE_LYON = PAGE_ENCHERE.replace("33000 Bordeaux", "69003 Lyon")
+PAGE_LYON = PAGE_ENCHERE.replace("33000 Bordeaux", "69003 Lyon").replace("Bordeaux", "Lyon")
 
 
 def test_extraction_texte_enchere():
@@ -162,3 +162,47 @@ def test_robots_absent_tout_permis(tmp_path, monkeypatch):
         assert Crawler(delay=0).allowed(f"http://127.0.0.1:{srv.server_address[1]}/page.html")
     finally:
         srv.shutdown()
+
+
+PAGE_LICITOR = """<html><head><title>Vente aux enchères : une villa à Ceyreste (Bouches-du-Rhône)</title></head>
+<body><h1>Une villa à Ceyreste (Bouches-du-Rhône)</h1>
+<p>Tribunal Judiciaire de Marseille, 6 rue Joseph Autran, 13006 Marseille</p>
+<p>Maître Dupont, avocat, 13006 Marseille</p>
+<p>Une villa de 156,45 m², terrain de 1 200 m². Mise à prix : 200 000 €</p>
+<p>Visite sur place : 12 chemin des Pins, Ceyreste</p></body></html>"""
+
+
+def test_localisation_par_titre_et_pas_par_le_tribunal():
+    a = texte.extraire(PAGE_LICITOR, "https://www.licitor.com/annonce/1", "licitor", "enchere")
+    assert (a.ville, a.departement, a.code_postal) == ("Ceyreste", "13", None)
+    assert a.prix == 200000 and a.surface == 156.45 and a.surface_terrain == 1200
+
+
+def test_cp_retenu_seulement_a_cote_de_la_ville():
+    page = PAGE_LICITOR.replace("12 chemin des Pins, Ceyreste", "12 chemin des Pins, 13600 Ceyreste")
+    a = texte.extraire(page, "u", "licitor", "enchere")
+    assert a.code_postal == "13600"
+
+
+def test_resolution_commune_par_nom_et_departement():
+    from immo_scanner.sources.base import Annonce, resolve_commune
+    c = db.connect(":memory:")
+    c.executemany("INSERT INTO communes VALUES (?,?,?,?)", [
+        ("13023", "13600", "Ceyreste", 40), ("13055", "13001", "Marseille", 900),
+        ("75115", "75015", "Paris 15e Arrondissement", 500)])
+    a = Annonce(source="t", ville="Ceyreste", departement="13")
+    resolve_commune(c, a)
+    assert (a.code_commune, a.code_postal) == ("13023", "13600")
+    b = Annonce(source="t", ville="Paris 15ème", departement="75")
+    resolve_commune(c, b)
+    assert (b.code_commune, b.code_postal) == ("75115", "75015")
+
+
+def test_geo():
+    from immo_scanner import geo
+    assert geo.departement_depuis_nom("Bouches-du-Rhône") == "13"
+    assert geo.departement_depuis_nom("val-d-oise") == "95"
+    assert geo.departement_depuis_nom("Corse-du-Sud") == "2A"
+    assert geo.code_arrondissement("Lyon 3e") == "69383"
+    assert geo.code_arrondissement("Marseille 8ème arrondissement") == "13208"
+    assert geo.code_arrondissement("Parisot") is None

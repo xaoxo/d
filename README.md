@@ -30,7 +30,7 @@ repérer les marchés porteurs sur toute la France, sans aucune annonce.
 ## Installation
 
 ```bash
-python3 -m pip install -e .        # Python 3.11+, aucune dépendance externe
+python3 -m pip install -e .        # Python 3.11+ (seule dépendance : truststore, pour les certificats)
 immo --help
 ```
 

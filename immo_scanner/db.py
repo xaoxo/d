@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS annonces (
     code_postal       TEXT,
     code_commune      TEXT,
     ville             TEXT,
+    departement       TEXT,
     lat               REAL,
     lon               REAL,
     dpe               TEXT,
@@ -123,7 +124,7 @@ def connect(path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
 def _migrer(conn) -> None:
     """Ajoute les colonnes apparues dans les versions récentes aux bases existantes."""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(annonces)")}
-    for col in ("mode_vente", "date_vente"):
+    for col in ("mode_vente", "date_vente", "departement"):
         if col not in cols:
             conn.execute(f"ALTER TABLE annonces ADD COLUMN {col} TEXT")
     conn.commit()
