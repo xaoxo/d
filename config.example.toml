@@ -1,0 +1,55 @@
+# Hypothèses de calcul — copiez ce fichier et adaptez-le :  immo --config ma_config.toml ...
+# Toute valeur absente garde sa valeur par défaut.
+
+[financement]
+apport_pct = 0.10          # 10 % d'apport sur le coût total (prix + notaire + travaux)
+taux_credit = 0.035        # taux nominal annuel
+duree_annees = 20
+taux_assurance = 0.003     # assurance emprunteur (% du capital / an)
+
+[frais]
+notaire_ancien = 0.078
+notaire_neuf = 0.025
+vacance_mois = 1.0                 # mois de vacance locative par an
+gestion_pct = 0.0                  # 0.07 si gestion par une agence
+assurance_pno = 150
+provision_entretien_pct = 0.05
+taxe_fonciere_mois_loyer = 1.0     # estimation si la taxe foncière n'est pas connue
+charges_copro_m2_an = 25           # estimation si les charges ne sont pas connues
+part_charges_non_recuperables = 0.4
+prime_meuble_pct = 0.10
+
+[fiscalite]
+regime = "micro_foncier"   # micro_foncier | reel | lmnp_micro | lmnp_reel
+tmi = 0.30                 # tranche marginale d'imposition
+prelevements_sociaux = 0.172
+mobilier = 5000
+
+[marche]
+annees_comparables = 3
+rayons_m = [300, 600, 1000, 2000]
+min_comparables = 8
+cible_comparables = 20
+
+[marche.ajustement_dpe]
+F = -0.07
+G = -0.12
+
+[travaux]
+prime_bien_renove = 0.10
+rafraichissement_m2 = 300
+renovation_m2 = 900
+renovation_lourde_m2 = 1500
+
+[projection]
+horizon_annees = 10
+tendance_min = -0.05
+tendance_max = 0.06
+
+[scoring.poids]          # importance de chaque critère dans le score /100
+decote = 0.30
+rendement = 0.25
+tri = 0.15
+tendance = 0.15
+cashflow = 0.05
+liquidite = 0.10

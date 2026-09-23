@@ -1,0 +1,292 @@
+"""Interface en ligne de commande : ``immo <commande>``."""
+from __future__ import annotations
+
+import argparse
+import json
+import random
+import sys
+from datetime import date
+from pathlib import Path
+
+from . import db
+from .analysis.analyzer import analyser, analyser_tout
+from .analysis.communes import classer_communes
+from .analysis.market import MarketModel
+from .config import load_config
+from .report import export, html
+from .sources import base, dvf, fichier, loyers, web
+
+
+def _annees(spec: str) -> list[int]:
+    if "-" in spec:
+        a, b = spec.split("-")
+        return list(range(int(a), int(b) + 1))
+    return [int(x) for x in spec.split(",")]
+
+
+def cmd_dvf(args, conn, cfg):
+    if args.fichier:
+        for f in args.fichier:
+            n = dvf.load_file(conn, Path(f), cfg.marche)
+            print(f"{f} : {n} ventes importées")
+    else:
+        deps = dvf.DEPARTEMENTS if args.departements == ["all"] else args.departements
+        annees = _annees(args.annees)
+        for annee in annees:
+            for dep in deps:
+                try:
+                    path = dvf.fetch(annee, dep, Path(args.cache))
+                    n = dvf.load_file(conn, path, cfg.marche)
+                    print(f"DVF {annee} dép. {dep} : {n} ventes")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"DVF {annee} dép. {dep} : échec ({exc})", file=sys.stderr)
+    dvf.rebuild_communes(conn)
+    total = conn.execute("SELECT COUNT(*) FROM dvf_ventes").fetchone()[0]
+    print(f"Base DVF : {total} ventes exploitables")
+
+
+def cmd_loyers(args, conn, cfg):
+    for src in args.source:
+        n = loyers.load(conn, src, args.type, Path(args.cache))
+        print(f"{src} : {n} indicateurs de loyer importés")
+
+
+def _enregistrer(conn, cfg, annonces, analyse=True):
+    new, upd = base.save(conn, annonces)
+    print(f"{new} nouvelle(s) annonce(s), {upd} mise(s) à jour")
+    if analyse:
+        n = analyser_tout(conn, cfg)
+        print(f"{n} annonce(s) analysée(s)")
+
+
+def cmd_import(args, conn, cfg):
+    annonces = []
+    for f in args.fichiers:
+        lot = fichier.read(f, args.source)
+        print(f"{f} : {len(lot)} ligne(s) lue(s)")
+        annonces += lot
+    if args.remplacer:
+        sources = {a.source for a in annonces}
+        conn.executemany("UPDATE annonces SET active=0 WHERE source=?", [(s,) for s in sources])
+    _enregistrer(conn, cfg, annonces)
+
+
+def cmd_web(args, conn, cfg):
+    urls = list(args.urls)
+    if args.fichier_urls:
+        urls += [l.strip() for l in Path(args.fichier_urls).read_text().splitlines()
+                 if l.strip() and not l.startswith("#")]
+    crawler = web.Crawler(delay=args.delai, max_pages=args.max_pages)
+    annonces = crawler.crawl(urls, follow=args.suivre, source=args.source)
+    print(f"{len(annonces)} annonce(s) trouvée(s)")
+    _enregistrer(conn, cfg, annonces)
+
+
+def cmd_analyser(args, conn, cfg):
+    print(f"{analyser_tout(conn, cfg)} annonce(s) analysée(s)")
+
+
+def _filtres(args):
+    return dict(ordre=args.ordre, limite=args.limite, departement=args.departement,
+                type_local=args.type, prix_max=args.prix_max, score_min=args.score_min)
+
+
+def cmd_top(args, conn, cfg):
+    rows = export.resultats(conn, **_filtres(args))
+    print(export.table_terminal(rows))
+    if args.csv:
+        export.to_csv(rows, args.csv)
+        print(f"\nExport CSV : {args.csv}")
+
+
+def cmd_rapport(args, conn, cfg):
+    rows = export.resultats(conn, **_filtres(args))
+    Path(args.sortie).write_text(html.render(rows, html.hypotheses(cfg)), encoding="utf-8")
+    print(f"Rapport : {args.sortie} ({len(rows)} biens)")
+
+
+def cmd_marches(args, conn, cfg):
+    rows = classer_communes(conn, cfg, args.departements, args.type, args.min_ventes)[: args.limite]
+    print(f"{'Score':>5}  {'Commune':<28} {'Prix m²':>8} {'Ventes/an':>9} {'Tendance':>9} "
+          f"{'Loyer m²':>8} {'Rdt brut':>8}")
+    for r in rows:
+        loyer = "—" if r["loyer_m2"] is None else f"{r['loyer_m2']:.1f}"
+        print(f"{r['score']:>5.1f}  {r['commune'][:28]:<28} {r['prix_m2_median']:>8} {r['ventes_par_an']:>9} "
+              f"{export.pct(r['tendance_annuelle']):>9} {loyer:>8} "
+              f"{export.pct(r['rendement_brut_theorique']):>8}")
+    if args.csv:
+        import csv
+        with open(args.csv, "w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(rows[0]) if rows else ["code_commune"], delimiter=";")
+            w.writeheader()
+            w.writerows(rows)
+        print(f"Export CSV : {args.csv}")
+
+
+def cmd_estimer(args, conn, cfg):
+    a = base.Annonce(source="manuel", titre=args.description, type_local=args.type, prix=args.prix,
+                     surface=args.surface, code_postal=args.cp, code_commune=args.commune, ville=args.ville,
+                     lat=args.lat, lon=args.lon, dpe=args.dpe, description=args.description,
+                     loyer_actuel=args.loyer, charges_annuelles=args.charges, taxe_fonciere=args.taxe_fonciere,
+                     neuf=args.neuf).normalized()
+    base.resolve_commune(conn, a)
+    row = {**a.__dict__, "id": a.id, "prix_initial": a.prix}
+    res = analyser(conn, cfg, MarketModel(conn, cfg.marche), row)
+    d = json.loads(res["details"])
+    b, e = d.get("bilan") or {}, d["estimation"]
+    pct, eur = export.pct, export.eur
+    print(f"Score : {res['score']} / 100  →  {res['verdict']}")
+    print(f"Commune (INSEE) : {a.code_commune or 'inconnue'}")
+    print(f"Prix marché : {eur(e['prix_m2'])}/m² ({e['nb_comparables']} comparables, {e['methode']}, "
+          f"fiabilité {e['fiabilite']})")
+    print(f"Valeur estimée : {eur(res['valeur_estimee'])}   Décote : {pct(res['decote_pct'])}")
+    print(f"Travaux estimés : {eur(d['travaux_estimes'])}   Tendance : {pct(res['tendance_annuelle'])}/an")
+    if b:
+        print(f"Loyer : {eur(b['loyer_mensuel'])}/mois ({d['source_loyer']})")
+        print(f"Rendement brut {pct(b['rendement_brut'])} · net {pct(b['rendement_net'])} · "
+              f"net-net {pct(b['rendement_net_net'])}")
+        print(f"Mensualité {eur(b['mensualite_credit'])} · cash-flow {eur(b['cashflow_mensuel'])} avant impôt, "
+              f"{eur(b['cashflow_mensuel_apres_impot'])} après")
+        print(f"À {b['horizon']} ans : revente {eur(b['valeur_revente'])}, plus-value nette "
+              f"{eur(b['plus_value_nette'])}, enrichissement {eur(b['enrichissement'])}, TRI {pct(b['tri'])}")
+    for s in d["signaux"]:
+        print(f"  + {s}")
+    for s in d["alertes"]:
+        print(f"  ! {s}")
+
+
+def cmd_stats(args, conn, cfg):
+    q = lambda sql: conn.execute(sql).fetchone()[0]  # noqa: E731
+    print(f"Ventes DVF        : {q('SELECT COUNT(*) FROM dvf_ventes')}")
+    print(f"  période         : {q('SELECT MIN(date_mutation) FROM dvf_ventes')} → "
+          f"{q('SELECT MAX(date_mutation) FROM dvf_ventes')}")
+    print(f"  départements    : {q('SELECT COUNT(DISTINCT code_departement) FROM dvf_ventes')}")
+    print(f"Indicateurs loyer : {q('SELECT COUNT(*) FROM loyers')}")
+    print(f"Annonces actives  : {q('SELECT COUNT(*) FROM annonces WHERE active=1')}")
+    print(f"Analyses          : {q('SELECT COUNT(*) FROM analyses')}")
+
+
+def cmd_demo(args, conn, cfg):
+    from . import demo
+    rng = random.Random(42)
+    today = date.today()
+    ventes = demo.generer_dvf(rng, today)
+    conn.executemany(f"INSERT OR REPLACE INTO dvf_ventes ({','.join(dvf.COLUMNS)}) "
+                     f"VALUES ({','.join('?' * len(dvf.COLUMNS))})", [[v[c] for c in dvf.COLUMNS] for v in ventes])
+    conn.executemany("INSERT OR REPLACE INTO loyers VALUES (?,?,?,?,?,?)", demo.generer_loyers())
+    conn.commit()
+    dvf.rebuild_communes(conn)
+    annonces = demo.generer_annonces(rng)
+    base.save(conn, annonces)
+    for a in annonces[::7]:        # simule des baisses de prix
+        a.prix = round(a.prix * rng.uniform(0.88, 0.96), -3)
+    base.save(conn, annonces[::7])
+    print(f"DÉMO (données fictives) : {len(ventes)} ventes, {len(annonces)} annonces")
+    print(f"{analyser_tout(conn, cfg)} annonce(s) analysée(s)")
+    rows = export.resultats(conn, limite=500)
+    Path(args.sortie).write_text(html.render(rows, html.hypotheses(cfg) + " — DONNÉES FICTIVES"),
+                                 encoding="utf-8")
+    print(export.table_terminal(rows[:15]))
+    print(f"\nRapport : {args.sortie}")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="immo", description="Scanner d'opportunités immobilières (France)")
+    p.add_argument("--db", default=str(db.DEFAULT_DB), help="base SQLite (défaut : data/immo.db)")
+    p.add_argument("--config", help="fichier TOML d'hypothèses (voir config.example.toml)")
+    p.add_argument("--cache", default="data/cache", help="dossier de téléchargement")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("dvf", help="importer les ventes DVF (data.gouv.fr)")
+    s.add_argument("--departements", nargs="+", default=["all"], help="ex : 75 92 93, ou all")
+    s.add_argument("--annees", default=f"{date.today().year - 5}-{date.today().year - 1}",
+                   help="ex : 2021-2025 ou 2023,2024")
+    s.add_argument("--fichier", nargs="+", help="fichier(s) DVF géolocalisés locaux (.csv / .csv.gz)")
+    s.set_defaults(func=cmd_dvf)
+
+    s = sub.add_parser("loyers", help="importer des indicateurs de loyers (fichier ou URL)")
+    s.add_argument("source", nargs="+")
+    s.add_argument("--type", choices=["appartement", "maison"], help="type de bien du fichier")
+    s.set_defaults(func=cmd_loyers)
+
+    s = sub.add_parser("import", help="importer des annonces (CSV / JSON / JSONL)")
+    s.add_argument("fichiers", nargs="+")
+    s.add_argument("--source", help="nom de la source (défaut : nom du fichier)")
+    s.add_argument("--remplacer", action="store_true",
+                   help="désactive les annonces de la source absentes de ce nouvel import")
+    s.set_defaults(func=cmd_import)
+
+    s = sub.add_parser("web", help="collecter des annonces schema.org (JSON-LD) sur des pages web")
+    s.add_argument("urls", nargs="*")
+    s.add_argument("--fichier-urls")
+    s.add_argument("--suivre", help="regex des liens d'annonces à suivre depuis les pages de résultats")
+    s.add_argument("--max-pages", type=int, default=200)
+    s.add_argument("--delai", type=float, default=2.0, help="secondes entre deux requêtes")
+    s.add_argument("--source", default="web")
+    s.set_defaults(func=cmd_web)
+
+    s = sub.add_parser("analyser", help="(re)calculer toutes les analyses")
+    s.set_defaults(func=cmd_analyser)
+
+    for name, helptext in (("top", "afficher les meilleures opportunités"),
+                           ("rapport", "générer le rapport HTML")):
+        s = sub.add_parser(name, help=helptext)
+        s.add_argument("--ordre", choices=list(export.ORDRES), default="score")
+        s.add_argument("--limite", type=int, default=30 if name == "top" else 1000)
+        s.add_argument("--departement")
+        s.add_argument("--type", choices=["appartement", "maison"])
+        s.add_argument("--prix-max", type=float)
+        s.add_argument("--score-min", type=float)
+        if name == "top":
+            s.add_argument("--csv", help="exporter en CSV")
+            s.set_defaults(func=cmd_top)
+        else:
+            s.add_argument("--sortie", default="rapport.html")
+            s.set_defaults(func=cmd_rapport)
+
+    s = sub.add_parser("marches", help="classer les communes (prix, tendance, rendement)")
+    s.add_argument("--departements", nargs="+")
+    s.add_argument("--type", choices=["appartement", "maison"], default="appartement")
+    s.add_argument("--min-ventes", type=int, default=30)
+    s.add_argument("--limite", type=int, default=30)
+    s.add_argument("--csv")
+    s.set_defaults(func=cmd_marches)
+
+    s = sub.add_parser("estimer", help="analyser un bien précis sans l'enregistrer")
+    s.add_argument("--prix", type=float, required=True)
+    s.add_argument("--surface", type=float, required=True)
+    s.add_argument("--type", choices=["appartement", "maison"], default="appartement")
+    s.add_argument("--cp", help="code postal")
+    s.add_argument("--commune", help="code INSEE")
+    s.add_argument("--ville")
+    s.add_argument("--lat", type=float)
+    s.add_argument("--lon", type=float)
+    s.add_argument("--dpe")
+    s.add_argument("--loyer", type=float, help="loyer mensuel actuel si loué")
+    s.add_argument("--charges", type=float, help="charges de copropriété annuelles")
+    s.add_argument("--taxe-fonciere", type=float)
+    s.add_argument("--neuf", action="store_true")
+    s.add_argument("--description", default="")
+    s.set_defaults(func=cmd_estimer)
+
+    s = sub.add_parser("stats", help="état de la base")
+    s.set_defaults(func=cmd_stats)
+
+    s = sub.add_parser("demo", help="charger un jeu de données FICTIF et produire un rapport")
+    s.add_argument("--sortie", default="rapport_demo.html")
+    s.set_defaults(func=cmd_demo)
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    cfg = load_config(args.config)
+    conn = db.connect(args.db)
+    try:
+        args.func(args, conn, cfg)
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    main()

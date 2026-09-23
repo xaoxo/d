@@ -1,0 +1,4 @@
+reference;titre;type;prix;surface;pieces;code_postal;ville;dpe;loyer_actuel;charges_annuelles;taxe_fonciere;url;description
+EX-001;Appartement T2 centre;appartement;145000;42;2;33000;Bordeaux;D;;1200;850;https://exemple.fr/annonce/1;Bel appartement lumineux proche tram
+EX-002;Maison à rénover;maison;98000;95;4;87000;Limoges;G;;;;https://exemple.fr/annonce/2;Maison à rénover entièrement, terrain constructible divisible, succession
+EX-003;Studio vendu loué;appartement;72000;19;1;59000;Lille;E;520;600;420;https://exemple.fr/annonce/3;Studio vendu loué, locataire en place
