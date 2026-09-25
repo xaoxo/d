@@ -240,3 +240,50 @@ def test_robots_403_ne_bloque_pas(monkeypatch):
     c = web.Crawler(delay=0)
     assert c.allowed("https://exemple.gouv.fr/page")
     assert "403" in c.explication_robots("https://exemple.gouv.fr/page")
+
+
+def page(titre, corps):
+    return f"<html><head><title>{titre}</title></head><body><h1>{titre}</h1>{corps}</body></html>"
+
+
+def test_avoventes_prix_du_titre_et_ville_hors_avocat():
+    html = page("120 000 euros - A VENDRE APPARTEMENT T3 A MERIGNAC",
+                "<p>Maître Durand, avocat au barreau de Bordeaux<br>10 cours de Verdun<br>33000 BORDEAUX</p>"
+                "<p>Appartement T3 de 50,54 m² situé 5 avenue X, 33700 Mérignac.</p>"
+                "<p>Prix de vente frais inclus : 129 600 €</p>")
+    a = texte.extraire(html, "https://avoventes.fr/enchere/x", "avoventes", "enchere")
+    assert a.prix == 120000 and a.surface == 50.54
+    assert (a.ville, a.code_postal, a.departement) == ("MERIGNAC", "33700", "33")
+
+
+def test_cedex_et_numero_de_dossier_ecartes():
+    html = page("Maison LACANAU OCÉAN",
+                "<p>SCP Martin, 33701 MERIGNAC CEDEX</p><p>Numéro de dossier : 34003 Numéro de dossier</p>"
+                "<p>Maison de 157 m² à 33680 Lacanau. Mise à prix : 675 000 €</p>")
+    a = texte.extraire(html, "u", "avoventes", "enchere")
+    assert (a.code_postal, a.ville) == ("33680", "Lacanau")
+
+
+def test_surface_avec_separateur_de_milliers_et_hors_cible(serveur, tmp_path):
+    html = page("Terrain Constructible De 1 178 M2 - Agde", "<p>Surface : 1 178 m². Prix : 252 000 €</p>")
+    a = texte.extraire(html, "u", "etat", "offre")
+    assert a.surface == 1178
+    (tmp_path / "liste.html").write_text('<a href="/biens/terrain-agde">t</a><a href="/biens/maison-agde">m</a>')
+    (tmp_path / "biens").mkdir()
+    (tmp_path / "biens" / "terrain-agde").write_text(html)
+    (tmp_path / "biens" / "maison-agde").write_text(
+        page("Maison de ville à Agde (Hérault)", "<p>Maison de 95 m². Prix : 210 000 €</p>"))
+    from immo_scanner.sources.web import Crawler
+    s = sites.Site("etat", "t", [serveur + "/liste.html"], liens_annonce=r"/biens/", mode_vente="offre")
+    rep = sites.collecter(s, Crawler(delay=0), log=lambda *_: None)
+    assert rep.hors_cible == 1 and [a.ville for a in rep.annonces] == ["Agde"]
+    assert rep.annonces[0].departement == "34"
+
+
+def test_titre_avec_code_postal():
+    a = texte.extraire(page("Maison en vente interactive à Freneuse (78840)", "<p>335 m². Prix : 755 000 €</p>"),
+                       "u", "36h", "offre")
+    assert (a.ville, a.code_postal, a.departement) == ("Freneuse", "78840", "78")
+    b = texte.extraire(page("Charmante Maison Des Années 30 à Bourg-en-bresse 01", "<p>142 m². Prix : 264 000 €</p>"),
+                       "u", "etat", "offre")
+    assert (b.ville, b.departement) == ("Bourg-en-bresse", "01")

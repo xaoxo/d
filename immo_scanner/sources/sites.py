@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import json_api
+from ..util import normalize
 from .base import Annonce
 from .dvf import departement_annonce
 from .texte import extraire
@@ -50,8 +51,7 @@ SITES_DEFAUT = [
          liens_liste=r"licitor\.com/ventes-(?:aux-encheres|judiciaires)-immobilieres/[^?#]*",
          mode_vente="enchere"),
     Site("avoventes", "Avoventes — enchères judiciaires et ventes amiables d'avocats",
-         ["https://www.avoventes.fr/recherche/toutes?sort=date&order=desc&display=liste",
-          "https://www.avoventes.fr/ventes-aux-encheres", "https://www.avoventes.fr/ventes-amiables"],
+         ["https://www.avoventes.fr/recherche/toutes?sort=date&order=desc&display=liste"],
          liens_annonce=r"avoventes\.fr/(?:enchere|encheres|vente-amiable|amiable|vente)/[a-z0-9][^?#\"'\s]*",
          liens_liste=r"avoventes\.fr/(?:recherche/toutes\?[^#]*page=\d+|ventes-aux-encheres\?[^#]*page=\d+|"
                      r"ventes-amiables\?[^#]*page=\d+)",
@@ -102,6 +102,10 @@ def charger_sites(path: str | Path | None = None) -> dict[str, Site]:
     return sites
 
 
+HORS_CIBLE = re.compile(r"\b(terrains?|parcelles?|bureaux?|local commercial|locaux|entrepots?|hangars?|"
+                        r"parkings?|garages?|box|forets?|bois|terres?|pres?|friche|chapelle|eglise)\b")
+
+
 @dataclass
 class Rapport:
     site: str
@@ -110,6 +114,7 @@ class Rapport:
     liens_annonce_trouves: int = 0
     annonces: list = field(default_factory=list)
     hors_departement: int = 0
+    hors_cible: int = 0                                     # terrains, bureaux, parkings…
     illisibles: list = field(default_factory=list)          # (url, ce qui manque)
     exemples_liens: list = field(default_factory=list)      # pour ajuster les motifs
     indices_api: list = field(default_factory=list)         # URL d'API repérées dans le code des pages
@@ -142,6 +147,9 @@ def collecter(site: Site, crawler: Crawler, departements=None, deja_vues: set | 
             a.mode_vente = mode_url
         elif a.mode_vente in (None, "vente"):
             a.mode_vente = site.mode_vente
+        if not a.normalized().type_local and HORS_CIBLE.search(normalize(a.titre or "")):
+            rep.hors_cible += 1
+            return False
         if deps:
             dep = departement_annonce(a.normalized())
             if dep and dep not in deps:

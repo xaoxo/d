@@ -11,7 +11,7 @@ import re
 from html.parser import HTMLParser
 
 from ..geo import departement_depuis_nom
-from ..util import to_float
+from ..util import normalize, to_float
 from .base import Annonce
 
 _IGNORES = {"script", "style", "noscript", "svg", "template", "head"}
@@ -63,9 +63,11 @@ RX_OFFRE = re.compile(r"(?:premi[èe]re\s+offre(?:\s+possible)?|offre\s+de\s+d[�
 RX_PRIX = re.compile(r"prix(?:\s+de\s+vente)?(?:\s+(?:net\s+vendeur|fai|hai|honoraires\s+inclus))?\s*:?\s*"
                      + NB + r"\s*(?:€|eur|euros?)", re.I)
 RX_EUROS = re.compile(NB + r"\s*(?:€|euros?)", re.I)
+SURF = r"((?:\d{1,3}(?:[ \u202f\xa0]\d{3})+|\d{1,5})(?:[,.]\d{1,2})?)"
 RX_SURFACE_CTX = re.compile(r"(?:surface(?:\s+habitable)?|loi\s+carrez|superficie|habitable)\s*(?:de|:)?\s*:?\s*"
-                            r"(\d{1,4}(?:[,.]\d{1,2})?)\s*m(?:²|2|\b)", re.I)
-RX_SURFACE = re.compile(r"(\d{1,4}(?:[,.]\d{1,2})?)\s*m(?:²|2\b)", re.I)
+                            + SURF + r"\s*m(?:²|2|\b)", re.I)
+RX_SURFACE = re.compile(SURF + r"\s*m(?:²|2\b)", re.I)
+RX_TITRE_PRIX = re.compile(r"^\s*" + NB + r"\s*(?:€|eur\b|euros?\b)", re.I)
 RX_TERRAIN = re.compile(r"terrain\s*(?:de|d'une\s+surface\s+de|:)?\s*:?\s*(\d{1,3}(?:[  \xa0.]\d{3})*|\d+)"
                         r"(?:[,.]\d+)?\s*m", re.I)
 RX_PIECES = re.compile(r"(\d{1,2})\s*pi[èe]ces?|\b[TF](\d)\b", re.I)
@@ -102,11 +104,47 @@ def texte_page(html: str) -> tuple[str, str, dict]:
 
 def _cp_pres_de(ville: str, corps: str) -> str | None:
     """Code postal écrit juste à côté du nom de la ville (« 13600 Ceyreste » / « Ceyreste (13600) »)."""
-    v = re.escape(ville.strip())
+    import unicodedata
+
+    def plier(t):            # sans accents ni majuscules : « MERIGNAC » = « Mérignac »
+        return "".join(c for c in unicodedata.normalize("NFD", t) if not unicodedata.combining(c)).lower()
+    corps, v = plier(corps), re.escape(plier(ville.strip()))
     cp = r"((?:0[1-9]|[1-8]\d|9[0-5])\d{3}|97[1-6]\d{2}|20[0-2]\d{2})"
     m = re.search(cp + r"\s*[-,]?\s*" + v + r"\b", corps, re.I) or \
         re.search(r"\b" + v + r"\s*[-,(]?\s*" + cp + r"\b", corps, re.I)
     return m.group(1) if m else None
+
+
+_PREPOSITION = re.compile(r"\s(?:à|À|a|A|sur la commune de|commune de)\s")
+_PAS_UN_LIEU = re.compile(r"^(vendre|renover|rafraichir|saisir|prevoir|usage|proximite|partir|deux pas|quelques)\b")
+_CONTEXTE_TIERS = re.compile(r"(avocat|ma[iî]tre|\bme\b|scp|selarl|selas|cabinet|tribunal|greffe|barreau|notaire|"
+                             r"[ée]tude|agence|si[èe]ge|t[ée]l|fax|cedex|bo[iî]te postale|\bbp\b)", re.I)
+_PAS_UNE_VILLE = re.compile(r"^(num[ée]ro|n°|r[ée]f[ée]rence|r[ée]f|dossier|t[ée]l|fax|cedex|lot|parcelle)", re.I)
+
+
+def _lieu_du_titre(titre: str):
+    """(ville, département, code postal) cités dans le titre, ou None."""
+    m = RX_TITRE_LIEU.search(titre)
+    if m:
+        ville, paren = m.group(1).strip(" -"), m.group(2).strip()
+        if re.fullmatch(r"\d{5}", paren):
+            return ville, departement_depuis_nom(paren[:3] if paren.startswith("97") else paren[:2]), paren
+        return ville, departement_depuis_nom(paren), None
+    morceaux = _PREPOSITION.split(titre)
+    if len(morceaux) < 2:
+        return None
+    lieu = morceaux[-1].strip(" -.,")
+    cp = dep = None
+    fin = re.search(r"\s+(\d{5}|\d{2,3}|2[AB])$", lieu)
+    if fin:
+        code, lieu = fin.group(1), lieu[:fin.start()].strip(" -,")
+        cp = code if len(code) == 5 else None
+        dep = departement_depuis_nom(code[:3] if code.startswith("97") else code[:2]) if cp else \
+            departement_depuis_nom(code)
+    if (not lieu or re.search(r"\d", lieu) or len(lieu.split()) > 6
+            or _PAS_UN_LIEU.search(normalize(lieu)) or not lieu[0].isupper()):
+        return None
+    return lieu, dep, cp
 
 
 def localiser(titre: str, corps: str, url: str = "") -> tuple[str | None, str | None, str | None]:
@@ -114,18 +152,32 @@ def localiser(titre: str, corps: str, url: str = "") -> tuple[str | None, str | 
 
     Le premier code postal d'une page est souvent celui du tribunal, de l'avocat ou de
     l'agence : on privilégie donc la ville citée dans le titre (« … à Ceyreste (Bouches-du-Rhône) »)
-    et on ne retient un code postal que s'il est écrit à côté de cette ville."""
-    m = RX_TITRE_LIEU.search(titre) or RX_TITRE_VILLE.search(titre)
-    if m:
-        ville = m.group(1).strip(" -")
-        departement = departement_depuis_nom(m.group(2)) if m.lastindex and m.lastindex >= 2 else None
-        cp = _cp_pres_de(ville, corps)
+    et on ne retient un code postal que s'il est écrit à côté de cette ville. À défaut, on écarte
+    les adresses de tiers (avocat, tribunal, CEDEX…) et les numéros de dossier."""
+    lieu = _lieu_du_titre(titre)
+    if lieu:
+        ville, departement, cp = lieu
+        cp = cp or _cp_pres_de(ville, corps)
         if cp and departement and not cp.startswith(departement[:2]):
             cp = None
-        return cp, ville, departement
-    m = RX_CP_VILLE.search(corps)
-    if m:
-        return m.group(1), m.group(2).strip(" -"), None
+        return cp, ville, departement or (departement_depuis_nom(cp[:2]) if cp else None)
+
+    titre_n = normalize(titre)
+    candidats = []
+    for m in RX_CP_VILLE.finditer(corps):
+        ville = m.group(2).strip(" -")
+        avant = corps[max(0, m.start() - 120):m.start()]
+        apres = corps[m.end():m.end() + 12]
+        if (_PAS_UNE_VILLE.search(ville) or re.search(r"cedex", apres, re.I)
+                or re.search(r"(n°|n\s*o|r[ée]f\.?|dossier)\s*:?\s*$", avant, re.I)
+                or _CONTEXTE_TIERS.search("\n".join(avant.split("\n")[-2:]))):   # 2 dernières lignes
+            continue
+        candidats.append((m.group(1), ville))
+    for cp, ville in candidats:           # une ville citée aussi dans le titre l'emporte
+        if len(normalize(ville)) > 2 and normalize(ville) in titre_n:
+            return cp, ville, None
+    if candidats:
+        return candidats[0][0], candidats[0][1], None
     m = RX_VILLE_CP.search(corps)
     if m and len(m.group(2)) == 5:
         return m.group(2), m.group(1).strip(" -"), None
@@ -137,9 +189,12 @@ def extraire(html: str, url: str, source: str, mode_vente: str = "vente") -> Ann
     corps = f"{titre}\n{meta.get('og:description', '')}\n{texte}"
 
     prix = None
+    m = RX_TITRE_PRIX.search(titre)          # « 120 000 euros - Appartement T3… » : prix affiché par le site
+    if m and _plausible_prix(_nombre(m.group(1))):
+        prix = _nombre(m.group(1))
     ordre = (RX_MISE_A_PRIX, RX_OFFRE, RX_PRIX, RX_EUROS) if mode_vente != "vente" else \
         (RX_PRIX, RX_MISE_A_PRIX, RX_OFFRE, RX_EUROS)
-    for rx in ordre:
+    for rx in ordre if not prix else ():
         for m in rx.finditer(corps):
             v = _nombre(m.group(1))
             if _plausible_prix(v):
@@ -151,7 +206,7 @@ def extraire(html: str, url: str, source: str, mode_vente: str = "vente") -> Ann
     surface = None
     for rx in (RX_SURFACE_CTX, RX_SURFACE):
         for m in rx.finditer(corps):
-            v = to_float(m.group(1))
+            v = to_float(re.sub(r"[ \u202f\xa0](?=\d{3})", "", m.group(1)))
             if v and 9 <= v <= 2000:
                 surface = v
                 break

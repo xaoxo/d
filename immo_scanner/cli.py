@@ -220,7 +220,8 @@ def cmd_sites_tester(args, conn, cfg):
         print(f"Pages de liste lues     : {rep.pages_liste}")
         print(f"Liens d'annonce trouvés : {rep.liens_annonce_trouves}")
         print(f"Fiches lues             : {rep.pages_annonce}")
-        print(f"Annonces extraites      : {len(rep.annonces)}  (hors département : {rep.hors_departement})")
+        print(f"Annonces extraites      : {len(rep.annonces)}  (hors département : {rep.hors_departement}, "
+              f"hors logement : {rep.hors_cible})")
         for a in rep.annonces[:5]:
             a.normalized()
             print(f"   - {a.prix:,.0f} € · {a.surface} m² · {a.code_postal or '?'} {a.ville or ''} · "
